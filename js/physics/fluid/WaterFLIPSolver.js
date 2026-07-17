@@ -1,5 +1,6 @@
 import { Grid3D } from "../mpm/Grid3D.js";
 import { tankBounds } from "../WaterTank.js";
+import { SpatialHash } from "./SpatialHash.js";
 
 /**
  * FLIP water solver with signed-distance free surface, red-black Gauss–Seidel
@@ -26,10 +27,13 @@ export class WaterFLIPSolver {
     this.maxMarkers = 12000;
     this.markerMass = this.rho * dx ** 3 * 0.125;
     this.pressureIterations = 35;
+    this.pcgIterations = 16;
+    this.rbgWarmupRatio = 0.35;
 
     const n = this.grid.count;
     this.pressure = new Float32Array(n);
     this.pressureScratch = new Float32Array(n);
+    this.phiScratch = new Float32Array(n);
     this.divergence = new Float32Array(n);
     this.phi = new Float32Array(n);
     this.densityField = new Float32Array(n);
@@ -37,6 +41,11 @@ export class WaterFLIPSolver {
     this.prevVx = new Float32Array(n);
     this.prevVy = new Float32Array(n);
     this.prevVz = new Float32Array(n);
+    this.cgR = new Float32Array(n);
+    this.cgZ = new Float32Array(n);
+    this.cgP = new Float32Array(n);
+    this.cgAp = new Float32Array(n);
+    this.spatialHash = new SpatialHash(dx * 1.2);
     this.phi.fill(1e3);
 
     this.surfaceY = this.bounds.yMin + (this.bounds.yMax - this.bounds.yMin) * tank.fillRatio;
@@ -138,7 +147,7 @@ export class WaterFLIPSolver {
   _reinitializePhi(g) {
     const dx = this.dx;
     const band = dx * 3;
-    const next = this.pressureScratch;
+    const next = this.phiScratch;
     next.set(this.phi);
 
     for (let k = 1; k < g.nz - 1; k++) {
@@ -377,6 +386,12 @@ export class WaterFLIPSolver {
   }
 
   _solvePressure(iterations) {
+    const warmup = Math.max(4, Math.floor(iterations * this.rbgWarmupRatio));
+    this._solvePressureRBGS(warmup);
+    this._solvePressurePCG(Math.min(this.pcgIterations, iterations - warmup + 8));
+  }
+
+  _solvePressureRBGS(iterations) {
     const g = this.grid;
     const dx2 = this.dx * this.dx;
     let cur = this.pressure;
@@ -415,6 +430,77 @@ export class WaterFLIPSolver {
     }
 
     if (cur !== this.pressure) this.pressure.set(cur);
+  }
+
+  _applyPoisson(x, out) {
+    const g = this.grid;
+    out.fill(0);
+    for (let k = 1; k < g.nz - 1; k++) {
+      for (let j = 1; j < g.ny - 1; j++) {
+        for (let i = 1; i < g.nx - 1; i++) {
+          const idx = g.idx(i, j, k);
+          if (!this._isFluid(idx)) continue;
+          const sum =
+            this._boundaryPressure(g.idx(i + 1, j, k), x) +
+            this._boundaryPressure(g.idx(i - 1, j, k), x) +
+            this._boundaryPressure(g.idx(i, j + 1, k), x) +
+            this._boundaryPressure(g.idx(i, j - 1, k), x) +
+            this._boundaryPressure(g.idx(i, j, k + 1), x) +
+            this._boundaryPressure(g.idx(i, j, k - 1), x);
+          out[idx] = 6 * x[idx] - sum;
+        }
+      }
+    }
+  }
+
+  _fluidDot(a, b) {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) {
+      if (this.fluidMask[i]) s += a[i] * b[i];
+    }
+    return s;
+  }
+
+  _solvePressurePCG(maxIter) {
+    const g = this.grid;
+    const dx2 = this.dx * this.dx;
+    const p = this.pressure;
+    const r = this.cgR;
+    const z = this.cgZ;
+    const q = this.cgP;
+    const Ap = this.cgAp;
+
+    for (let idx = 0; idx < g.count; idx++) {
+      r[idx] = this._isFluid(idx) ? this.divergence[idx] * dx2 : 0;
+    }
+    this._applyPoisson(p, Ap);
+    for (let idx = 0; idx < g.count; idx++) {
+      if (this._isFluid(idx)) r[idx] -= Ap[idx];
+    }
+
+    let rz = this._fluidDot(r, r);
+    if (rz < 1e-20) return;
+
+    z.set(r);
+    q.set(z);
+
+    for (let it = 0; it < maxIter; it++) {
+      this._applyPoisson(q, Ap);
+      const alpha = rz / (this._fluidDot(q, Ap) + 1e-20);
+      for (let idx = 0; idx < g.count; idx++) {
+        if (this._isFluid(idx)) p[idx] += alpha * q[idx];
+      }
+      for (let idx = 0; idx < g.count; idx++) {
+        if (this._isFluid(idx)) r[idx] -= alpha * Ap[idx];
+      }
+      const rzNew = this._fluidDot(r, r);
+      if (rzNew < 1e-14) break;
+      const beta = rzNew / rz;
+      for (let idx = 0; idx < g.count; idx++) {
+        if (this._isFluid(idx)) q[idx] = r[idx] + beta * q[idx];
+      }
+      rz = rzNew;
+    }
   }
 
   _applyPressure(g, dt) {
@@ -506,7 +592,6 @@ export class WaterFLIPSolver {
   _updateMarkers(g, dt) {
     const r = this.flipRatio;
     const h = this.dx * 1.1;
-    const h2 = h * h;
 
     for (const m of this.markers) {
       const [dVx, dVy, dVz] = this._sampleGridDelta(g, m.x, m.y, m.z);
@@ -528,47 +613,94 @@ export class WaterFLIPSolver {
     }
 
     if (this.xsphStrength > 0 && this.markers.length > 1) {
-      this._applyXsph(h, h2);
+      this._applyXsph(h);
     }
   }
 
-  _applyXsph(h, h2) {
+  /** Public velocity sample for smoke/bubble coupling (uses last step's grid state). */
+  sampleVelocityAt(x, y, z) {
+    return this._sampleGridVelocity(this.grid, x, y, z);
+  }
+
+  /** Free-surface height from level-set φ zero crossing at (x, z). */
+  sampleSurfaceHeightAt(x, z) {
+    const g = this.grid;
+    const { base } = g.nodeFromWorld(x, this.surfaceY, z);
+    const i = Math.max(1, Math.min(g.nx - 2, base[0]));
+    const k = Math.max(1, Math.min(g.nz - 2, base[2]));
+
+    for (let j = 1; j < g.ny - 2; j++) {
+      const phi0 = this.phi[g.idx(i, j, k)];
+      const phi1 = this.phi[g.idx(i, j + 1, k)];
+      if (phi0 < 0 && phi1 >= 0) {
+        const t = phi0 / (phi0 - phi1 + 1e-10);
+        const y0 = g.worldPos(i, j, k)[1];
+        return y0 + t * this.dx;
+      }
+    }
+    return this.surfaceY;
+  }
+
+  /** Radial impulse on surface markers (boil splash / recoil ring). */
+  applySurfaceRingImpulse(x, y, z, radius, strength) {
+    const r2 = radius * radius;
+    const surfaceY = this.sampleSurfaceHeightAt(x, z);
+    const band = this.dx * 3;
+
+    for (const m of this.markers) {
+      if (Math.abs(m.y - surfaceY) > band) continue;
+      const dx = m.x - x, dz = m.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > r2 || d2 < 1e-12) continue;
+      const w = Math.exp(-d2 / (r2 * 0.45));
+      const invDist = 1 / Math.sqrt(d2);
+      m.vx += dx * invDist * strength * w;
+      m.vy += strength * w * 0.35;
+      m.vz += dz * invDist * strength * w;
+    }
+  }
+
+  _applyXsph(h) {
     const s = this.xsphStrength;
-    const n = this.markers.length;
+    const markers = this.markers;
+    const n = markers.length;
+    if (n < 2) return;
+
+    const hash = this.spatialHash;
+    hash.clear();
+    for (let a = 0; a < n; a++) {
+      const m = markers[a];
+      hash.insert(a, m.x, m.y, m.z);
+    }
+
     const avgVx = new Float32Array(n);
     const avgVy = new Float32Array(n);
     const avgVz = new Float32Array(n);
-    const weights = new Float32Array(n);
+    const wSum = new Float32Array(n);
 
     for (let a = 0; a < n; a++) {
-      const ma = this.markers[a];
-      let wSum = 0;
-      for (let b = 0; b < n; b++) {
-        if (a === b) continue;
-        const mb = this.markers[b];
+      const ma = markers[a];
+      hash.forEachNeighbor(ma.x, ma.y, ma.z, h, (b, r2) => {
+        if (a === b) return;
+        const mb = markers[b];
         const dx = ma.x - mb.x, dy = ma.y - mb.y, dz = ma.z - mb.z;
         const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 > h2) continue;
+        if (d2 > r2) return;
         const w = 1 - Math.sqrt(d2) / h;
         avgVx[a] += mb.vx * w;
         avgVy[a] += mb.vy * w;
         avgVz[a] += mb.vz * w;
-        wSum += w;
-      }
-      if (wSum > 1e-8) {
-        avgVx[a] /= wSum;
-        avgVy[a] /= wSum;
-        avgVz[a] /= wSum;
-        weights[a] = wSum;
-      }
+        wSum[a] += w;
+      });
     }
 
     for (let a = 0; a < n; a++) {
-      if (weights[a] < 1e-8) continue;
-      const m = this.markers[a];
-      m.vx += s * (avgVx[a] - m.vx);
-      m.vy += s * (avgVy[a] - m.vy);
-      m.vz += s * (avgVz[a] - m.vz);
+      if (wSum[a] < 1e-8) continue;
+      const inv = 1 / wSum[a];
+      const m = markers[a];
+      m.vx += s * (avgVx[a] * inv - m.vx);
+      m.vy += s * (avgVy[a] * inv - m.vy);
+      m.vz += s * (avgVz[a] * inv - m.vz);
     }
   }
 

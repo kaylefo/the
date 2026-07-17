@@ -10,6 +10,7 @@ import { WaterDeviceProfile, AdaptiveQuality } from "./platform/DeviceProfile.js
 import { MobileHUD } from "./ui/MobileHUD.js";
 import { WaterLabAudio } from "./audio/WaterLabAudio.js";
 import { BubbleSystem } from "./physics/fluid/BubbleSystem.js";
+import { WaterSmokeCoupler } from "./physics/fluid/WaterSmokeCoupler.js";
 import { PostProcessPipeline } from "./rendering/PostProcessPipeline.js";
 import { CausticsGenerator } from "./rendering/CausticsGenerator.js";
 import { createTableCausticsMaterial, createFloorCausticsMaterial } from "./rendering/TableCausticsMaterial.js";
@@ -198,6 +199,7 @@ export class WaterLabSimulation {
     this.vaporization = new VaporizationCoupler({
       maxRemovePerFrame: Math.round(q.flipMaxMarkers * 0.008),
     });
+    this.waterSmoke = new WaterSmokeCoupler(TANK);
     const b = tankBounds(TANK);
     this.surfaceY = b.yMin + (b.yMax - b.yMin) * TANK.fillRatio;
     this.vaporization.setSurfaceY(this.surfaceY);
@@ -523,7 +525,13 @@ export class WaterLabSimulation {
       this.waterRenderer.spawnFoam(vapor.foamEvents, this.simScale);
     }
 
-    const bubbleResult = this.bubbles.step(dt, this.surfaceY);
+    this.waterSmoke.step(this.water, this.smoke, dt);
+
+    const bubbleResult = this.bubbles.step(
+      dt,
+      this.surfaceY,
+      (x, y, z) => this.water.sampleVelocityAt(x, y, z)
+    );
     for (const pop of bubbleResult.pops) {
       this.smoke.inject(pop.x, pop.y + 0.004, pop.z, 0.0015 * pop.intensity, 80, {
         vy: 2 + Math.random(),
@@ -583,8 +591,8 @@ export class WaterLabSimulation {
       }
     }
 
-    this.caustics.updateFromDensity(
-      this.water.densityField,
+    this.caustics.updateFromPhi(
+      this.water.phi,
       g.nx, g.ny, g.nz,
       g.origin, g.dx, TANK
     );
@@ -689,7 +697,11 @@ export class WaterLabSimulation {
     }
 
     this.waterRenderer.setTime(this.clock.elapsedTime);
-    this.waterRenderer.setSurfaceDynamics(this.water.sloshEnergy, this.water.surfaceRipple);
+    this.waterRenderer.setSurfaceDynamics(
+      this.water.sloshEnergy,
+      this.water.surfaceRipple,
+      this.vaporization.lastVaporRate
+    );
     this.smokeRenderer.setCameraPos(this.camera.position);
 
     this.waterRenderer.renderWaterPass(this.renderer, this.scene, this.camera, this.smokeRenderer.mesh);

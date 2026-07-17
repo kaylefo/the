@@ -28,6 +28,7 @@ const waterFragmentShader = /* glsl */ `
   uniform float uSSRStrength;
   uniform float uSloshEnergy;
   uniform float uSurfaceRipple;
+  uniform float uBoilIntensity;
   uniform float uCameraNear;
   uniform float uCameraFar;
   uniform samplerCube uEnvMap;
@@ -120,6 +121,10 @@ const waterFragmentShader = /* glsl */ `
     color += uLightColor * spec;
     color += vec3(0.6, 0.75, 0.9) * caustic;
 
+    // Boiling foam film — white crests at glancing angles when vaporizing
+    float boilFoam = uBoilIntensity * (0.35 + 0.65 * pow(1.0 - NdotV, 3.0)) * (0.4 + uSloshEnergy * 0.3);
+    color = mix(color, vec3(0.92, 0.96, 1.0), boilFoam * 0.55);
+
     float alpha = mix(0.82, 0.95, fresnel);
     gl_FragColor = vec4(color, alpha);
   }
@@ -175,6 +180,7 @@ export class WaterRenderer {
         uSSRStrength: { value: 1 },
         uSloshEnergy: { value: 0 },
         uSurfaceRipple: { value: 0 },
+        uBoilIntensity: { value: 0 },
         uCameraNear: { value: 0.01 },
         uCameraFar: { value: 30 },
         uEnvMap: { value: null },
@@ -264,9 +270,10 @@ export class WaterRenderer {
     this.material.uniforms.uTime.value = t;
   }
 
-  setSurfaceDynamics(sloshEnergy, surfaceRipple) {
+  setSurfaceDynamics(sloshEnergy, surfaceRipple, boilIntensity = 0) {
     this.material.uniforms.uSloshEnergy.value = sloshEnergy;
     this.material.uniforms.uSurfaceRipple.value = surfaceRipple;
+    this.material.uniforms.uBoilIntensity.value = boilIntensity;
   }
 
   _ensureBuffers(vertCount) {

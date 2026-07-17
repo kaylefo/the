@@ -114,6 +114,11 @@ export class VaporizationCoupler {
           bubbles.spawn(b.x, b.y, b.z, 1 + Math.floor(b.w * 3), src.intensity);
         }
       }
+
+      // Surface ring wave from underwater boil (recoil on free surface)
+      if (underwater && w > 0.25) {
+        water.applySurfaceRingImpulse(src.x, this.surfaceY, src.z, this.radius * 1.8, w * src.intensity * 0.35);
+      }
     }
 
     this.lastVaporRate = Math.min(1, vaporMass / (water.markerMass * 8 + 1e-6));

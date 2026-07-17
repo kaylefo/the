@@ -39,6 +39,16 @@ Physics runs at 120 Hz substeps (`PHYSICS_DT = 1/120`) with tier-dependent subst
 12. **XSPH** — Light inter-marker cohesion to reduce surface noise.
 13. **Surface metrics** — Track dynamic surface Y, slosh energy, ripple amplitude for audio/shaders.
 
+### Phase 2 — multiphysics coupling
+
+- **Hybrid pressure** — Red-black Gauss–Seidel warm-up + conjugate gradient polish (free-surface Laplacian).
+- **Spatial-hash XSPH** — O(n) marker cohesion instead of O(n²) all-pairs.
+- **`WaterSmokeCoupler`** — Steam inherits surface slosh velocity; submerged steam dragged by liquid flow.
+- **`BubbleSystem`** — Bubbles advected with FLIP velocity field + wobble; pop at dynamic surface.
+- **Boil ring waves** — Underwater vaporization applies radial impulse on free-surface markers.
+- **φ caustics** — CausticsGenerator traces level-set zero crossings for sharper floor caustics.
+- **Boil foam shader** — `uBoilIntensity` white crests tied to vaporization rate.
+
 ## Rendering pipeline
 
 ```
@@ -52,11 +62,12 @@ Scene (glass tank, water mesh, smoke volume, caustic floor/table)
 
 ### Physics
 
-- **`WaterFLIPSolver`** — FLIP/APIC hybrid water with signed-distance free surface, red-black Gauss–Seidel pressure projection (Dirichlet p = 0 at air), grid + marker tank walls, CSF surface tension, vorticity confinement, XSPH cohesion, and proper FLIP velocity transfer (u += Δu_grid).
-- **`VaporizationCoupler`** — Maps click heat to liquid mass removal and smoke injection.
+- **`WaterFLIPSolver`** — FLIP/APIC hybrid water with signed-distance free surface, RB-GS + PCG pressure (Dirichlet p = 0 at air), grid + marker tank walls, CSF surface tension, vorticity confinement, spatial-hash XSPH, proper FLIP transfer (u += Δu_grid), surface ring impulses.
+- **`WaterSmokeCoupler`** — Steam inherits surface slosh; submerged steam dragged by liquid velocity field.
+- **`VaporizationCoupler`** — Maps click heat to liquid mass removal, smoke injection, and boil ring waves.
 - **`StableFluidsSmoke`** — CPU stable-fluids on a 3D grid; active-cell sparse iteration for buoyancy/advection.
 - **`WebGPUSmokeAccelerator`** — Optional WGSL compute density advection (Ultra tier, 1-frame readback latency).
-- **`BubbleSystem`** — Underwater bubble spawn/pop at heat sources.
+- **`BubbleSystem`** — Bubbles advected with FLIP water, wobble, pop at dynamic surface.
 - **`CondensationSimulator`** — Moisture atlas on four glass wall faces from nearby steam density/temperature.
 
 ### Rendering
