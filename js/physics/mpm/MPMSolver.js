@@ -11,6 +11,11 @@ const _gradV = new Mat3();
 const _dF = new Mat3();
 const _Fnew = new Mat3();
 
+const VMAX = 20;
+const VMAX2 = VMAX * VMAX;
+const J_MIN = 0.4;
+const J_MAX = 2.5;
+
 export class MPMSolver {
   constructor(options = {}) {
     this.dx = options.dx ?? 0.004;
@@ -21,6 +26,9 @@ export class MPMSolver {
     this.gravity = options.gravity ?? -9.81;
     this.groundY = options.groundY ?? 0;
     this.friction = options.friction ?? 0.35;
+    // Largest stable explicit substep (CFL: dt < dx / c_sound). Kept well below
+    // the limit for the stiffest tissue so the transfer stays stable.
+    this.maxSubDt = options.maxSubDt ?? 1e-4;
 
     this.grid = new Grid3D(this.nx, this.ny, this.nz, this.origin, this.dx);
     this.particles = [];
@@ -28,6 +36,7 @@ export class MPMSolver {
 
     this.pressPlateY = 0.09;
     this.pressPlateActive = false;
+    this.plateVel = 0;
     this.pressForce = 0;
     this.pressDisplacement = 0;
     this.pressRestY = 0.09;
@@ -62,15 +71,17 @@ export class MPMSolver {
     this.maxStrainEnergy = 0;
   }
 
-  setPressPlate(y, active) {
+  setPressPlate(y, active, vel = 0) {
     this.pressPlateY = y;
     this.pressPlateActive = active;
+    this.plateVel = vel;
     this.pressDisplacement = this.pressRestY - y;
   }
 
   step(dt) {
-    dt = Math.min(dt, 2e-4);
-    const substeps = 1;
+    // Split the requested interval into CFL-stable substeps (capped so a huge
+    // frame delta can never trigger an unbounded amount of work).
+    const substeps = Math.max(1, Math.min(8, Math.ceil(dt / this.maxSubDt)));
     const sdt = dt / substeps;
     let ruptureEvents = [];
 
@@ -121,10 +132,11 @@ export class MPMSolver {
             grid.mass[idx] += w * p.mass;
             grid.active[idx] = 1;
 
+            // APIC affine momentum uses world-space distance (xi - xp).
             grid.worldPos(i, j, k, _cellDist);
-            _cellDist[0] = (_cellDist[0] - p.x[0]) * invDx;
-            _cellDist[1] = (_cellDist[1] - p.x[1]) * invDx;
-            _cellDist[2] = (_cellDist[2] - p.x[2]) * invDx;
+            _cellDist[0] = _cellDist[0] - p.x[0];
+            _cellDist[1] = _cellDist[1] - p.x[1];
+            _cellDist[2] = _cellDist[2] - p.x[2];
 
             const mv0 = w * p.mass * (p.v[0] + p.C.m[0] * _cellDist[0] + p.C.m[3] * _cellDist[1] + p.C.m[6] * _cellDist[2]);
             const mv1 = w * p.mass * (p.v[1] + p.C.m[1] * _cellDist[0] + p.C.m[4] * _cellDist[1] + p.C.m[7] * _cellDist[2]);
@@ -180,11 +192,17 @@ export class MPMSolver {
             vz *= 1 - this.friction * 0.5;
           }
 
-          // Press plate contact
-          if (this.pressPlateActive && pos[1] > this.pressPlateY && vy > 0) {
-            const penetration = pos[1] - this.pressPlateY;
-            vy = -Math.abs(vy) * 0.1;
-            this.pressForce += m * Math.abs(this.gravity) + penetration * 1e5 * dt;
+          // Press plate contact: a kinematic plate that pushes material down.
+          // Any node above the plate is driven to (at most) the plate's own
+          // velocity, so a descending plate actually compresses the tomato.
+          if (this.pressPlateActive && pos[1] > this.pressPlateY) {
+            const pv = this.plateVel;
+            if (vy > pv) {
+              this.pressForce += (m * (vy - pv)) / dt;
+              vy = pv;
+            }
+            vx *= 1 - this.friction * 0.5;
+            vz *= 1 - this.friction * 0.5;
           }
 
           // Domain walls
@@ -194,6 +212,16 @@ export class MPMSolver {
           if (k <= pad && vz < 0) vz = 0;
           if (k >= grid.nz - pad - 1 && vz > 0) vz = 0;
           if (j <= 1 && vy < 0) vy = 0;
+
+          // Safety net: physical speeds here are < ~1 m/s. Clamping well above
+          // that keeps a transient stiffness spike (e.g. extreme local
+          // compression) from cascading into an unrecoverable NaN blow-up,
+          // giving the fracture model time to relieve the strain.
+          const sp2 = vx * vx + vy * vy + vz * vz;
+          if (sp2 > VMAX2) {
+            const s = VMAX / Math.sqrt(sp2);
+            vx *= s; vy *= s; vz *= s;
+          }
 
           grid.vx[idx] = vx;
           grid.vy[idx] = vy;
@@ -219,7 +247,9 @@ export class MPMSolver {
       const wz = _w.slice();
 
       let newV = [0, 0, 0];
-      p.C.identity();
+      // APIC affine velocity matrix is an accumulator; it must start at zero
+      // (initialising to identity injects a spurious I into ∇v and inflates F).
+      p.C.m.fill(0);
       let maxGridDamage = 0;
       let maxPsi = 0;
 
@@ -270,6 +300,16 @@ export class MPMSolver {
       Mat3.addScaledIdentity(_dF, 1, _dF);
       Mat3.mul(_dF, p.F, _Fnew);
       p.F.copy(_Fnew);
+
+      // Volumetric limiter (poor-man's plasticity): cap how far the material
+      // may compress/expand. This bounds the tangent stiffness — and hence the
+      // wave speed — so an over-strained cell can't drive an explicit blow-up.
+      const Jc = Mat3.det(p.F);
+      if (Jc > 1e-4 && (Jc < J_MIN || Jc > J_MAX)) {
+        const target = Jc < J_MIN ? J_MIN : J_MAX;
+        const s = Math.cbrt(target / Jc);
+        for (let i = 0; i < 9; i++) p.F.m[i] *= s;
+      }
 
       // Phase-field damage transfer
       p.damage = Math.max(p.damage, maxGridDamage);
