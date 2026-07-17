@@ -5,6 +5,9 @@ const HDR_URL =
 
 /**
  * Load HDR studio IBL or fall back to procedural equirectangular.
+ * Returns { envMap, equirect }:
+ * - envMap: PMREM for scene.environment / MeshStandardMaterial
+ * - equirect: 2D lat-long map for custom ShaderMaterials (sampler2D)
  */
 export async function loadStudioEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -32,11 +35,10 @@ export async function loadStudioEnvironment(renderer, scene) {
     ]);
     hdr.mapping = THREE.EquirectangularReflectionMapping;
     const envMap = pmrem.fromEquirectangular(hdr).texture;
-    hdr.dispose();
     pmrem.dispose();
     scene.environment = envMap;
     scene.environmentIntensity = 0.85;
-    return envMap;
+    return { envMap, equirect: hdr };
   } catch (err) {
     console.warn("[WaterLab] HDR load failed, using procedural studio:", err?.message);
     return _proceduralStudio(pmrem, scene);
@@ -66,15 +68,14 @@ function _proceduralStudio(pmrem, scene) {
   ctx.fillStyle = spot;
   ctx.fillRect(0, 0, w, h);
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.mapping = THREE.EquirectangularReflectionMapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const envMap = pmrem.fromEquirectangular(tex).texture;
-  tex.dispose();
+  const equirect = new THREE.CanvasTexture(canvas);
+  equirect.mapping = THREE.EquirectangularReflectionMapping;
+  equirect.colorSpace = THREE.SRGBColorSpace;
+  const envMap = pmrem.fromEquirectangular(equirect).texture;
   pmrem.dispose();
   scene.environment = envMap;
   scene.environmentIntensity = 0.75;
-  return envMap;
+  return { envMap, equirect };
 }
 
 export function applyEnvironmentToScene(scene, envMap, intensity = 0.85) {

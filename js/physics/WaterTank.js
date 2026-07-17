@@ -60,10 +60,10 @@ export async function fillTankAsync(solver, tank = TANK, fillRatio = tank.fillRa
   for (let y = b.yMin + spacing * 0.5; y < fillY; y += spacing) ys.push(y);
   const total = Math.min(xs.length * zs.length * ys.length, solver.maxMarkers);
 
-  for (const x of xs) {
+  outer: for (const x of xs) {
     for (const z of zs) {
       for (const y of ys) {
-        if (solver.markers.length >= solver.maxMarkers) return;
+        if (solver.markers.length >= solver.maxMarkers) break outer;
         solver.markers.push(solver._createMarker({
           x: x + (Math.random() - 0.5) * jitter,
           y: y + (Math.random() - 0.5) * jitter,
@@ -71,7 +71,7 @@ export async function fillTankAsync(solver, tank = TANK, fillRatio = tank.fillRa
         }));
         added++;
         if (added % yieldEvery === 0) {
-          onProgress?.(added / total);
+          onProgress?.(Math.min(0.99, added / Math.max(1, total)));
           await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
         }
       }

@@ -1,7 +1,7 @@
 import { probeWebGL, yieldToMain } from "./platform/WebGLProbe.js";
 import { LoadingManager } from "./platform/LoadingManager.js";
 import { LoadingUI, publishLoadReport } from "./ui/LoadingUI.js";
-import { createWaterSimulation, WATER_LOAD_STAGES } from "./WaterLabSimulation.js";
+import { WATER_LOAD_STAGES } from "./platform/WaterLoadStages.js";
 
 const LOAD_TIMEOUT_MS = 120000;
 
@@ -52,9 +52,10 @@ async function runLoadPipeline(loadingUI) {
     const canvas = document.getElementById("canvas");
     if (!canvas) throw new Error("Canvas element not found.");
 
-    await loader.runStage("engine_module", async () => {
+    // Load the heavy water engine only after tap — same contract as Tomato Lab.
+    const { createWaterSimulation } = await loader.runStage("engine_module", async () => {
       await yieldToMain();
-      return true;
+      return import("./WaterLabSimulation.js");
     });
 
     const sim = await createWaterSimulation(canvas, loader);

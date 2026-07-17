@@ -62,10 +62,10 @@ const smokeFragmentShader = /* glsl */ `
       if (i >= steps) break;
       if (transmittance < 0.02) break;
 
-      vec4 sample = sampleVol(pos);
-      float density = sample.r;
+      vec4 volSample = sampleVol(pos);
+      float density = volSample.r;
       if (density > 0.001) {
-        float temp = sample.g;
+        float temp = volSample.g;
         vec3 smokeColor = mix(vec3(0.75, 0.78, 0.82), vec3(0.95, 0.92, 0.85), clamp(temp * 2.0, 0.0, 1.0));
 
         // Light march (single sample toward light for self-shadow hint)

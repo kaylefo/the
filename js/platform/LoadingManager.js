@@ -12,6 +12,7 @@ export class LoadingManager {
     this.stageStartMs = 0;
     this.bootStartMs = 0;
     this.subProgress = 0;
+    this.logTag = "SimLoad";
   }
 
   markBootStart() {
@@ -54,17 +55,22 @@ export class LoadingManager {
       durationMs: Math.round(durationMs * 10) / 10,
       ok,
       error: err?.message ?? null,
-      percentAfter: this.getPercent(),
+      percentAfter: 0,
       timestamp: new Date().toISOString(),
     };
     this.metrics.push(entry);
+    // Percent after completion must include this stage's weight.
+    entry.percentAfter = Math.min(
+      100,
+      Math.round((this.getCompletedWeight() / this.totalWeight) * 100)
+    );
 
     const status = ok ? "OK" : "FAIL";
     console.log(
-      `[TomatoLoad] ${status} ${id} — ${label} (${entry.durationMs}ms) → ${entry.percentAfter}%`
+      `[${this.logTag}] ${status} ${id} — ${label} (${entry.durationMs}ms) → ${entry.percentAfter}%`
     );
     if (err) {
-      console.error(`[TomatoLoad] ${id} error:`, err);
+      console.error(`[${this.logTag}] ${id} error:`, err);
       this.errors.push({ id, message: err.message, stack: err.stack });
     }
 
@@ -72,7 +78,7 @@ export class LoadingManager {
   }
 
   _log(tag, message) {
-    console.log(`[TomatoLoad] ${tag}: ${message}`);
+    console.log(`[${this.logTag}] ${tag}: ${message}`);
   }
 
   getCompletedWeight() {
@@ -90,22 +96,26 @@ export class LoadingManager {
     if (this.currentStage) {
       weight += this.currentStage.weight * this.subProgress;
     }
+    if (this.totalWeight <= 0) return 0;
     return Math.min(100, Math.round((weight / this.totalWeight) * 100));
   }
 
   getCurrentLabel() {
     if (this.currentStage) return this.currentStage.label;
-    if (this.metrics.length === this.stages.length) return "Complete";
+    if (this.metrics.length >= this.stages.length) return "Complete";
     return "Waiting…";
   }
 
   getReport() {
+    const allDone =
+      this.stages.length > 0 &&
+      this.stages.every((s) => this.metrics.some((m) => m.id === s.id && m.ok));
     return {
       totalMs: this.bootStartMs ? Math.round(performance.now() - this.bootStartMs) : 0,
       percent: this.getPercent(),
       stages: [...this.metrics],
       errors: [...this.errors],
-      success: this.errors.length === 0 && this.metrics.every((m) => m.ok),
+      success: this.errors.length === 0 && allDone,
     };
   }
 

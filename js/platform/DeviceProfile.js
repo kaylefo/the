@@ -375,12 +375,22 @@ export class WaterDeviceProfile extends DeviceProfile {
     if (this.mobile) {
       return {
         ...base,
-        waterGridSize: Math.min(base.waterGridSize, 28),
-        flipMaxMarkers: Math.min(base.flipMaxMarkers, 8000),
-        bloom: this.tier === "ultra" ? false : base.bloom,
+        // Keep first-load / first-frame work inside mobile watchdog budgets.
+        waterGridSize: Math.min(base.waterGridSize, 24),
+        flipMaxMarkers: Math.min(base.flipMaxMarkers, 4500),
+        flipIterations: Math.min(base.flipIterations, 18),
+        smokeRes: Math.min(base.smokeRes ?? 40, 32),
+        smokeSteps: Math.min(base.smokeSteps ?? 36, 28),
+        physicsSubsteps: 1,
+        meshInterval: Math.max(base.meshInterval ?? 2, 2),
+        bloom: false,
         godRays: false,
         filmGrain: false,
-        heatShimmer: base.heatShimmer && this.tier !== "ultra",
+        heatShimmer: false,
+        useWebGPU: false,
+        maxPixelRatio: Math.min(base.maxPixelRatio ?? 2, 1.5),
+        causticRes: Math.min(base.causticRes ?? 64, 48),
+        condensationRes: Math.min(base.condensationRes ?? 40, 32),
       };
     }
     return base;

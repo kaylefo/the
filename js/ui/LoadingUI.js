@@ -115,5 +115,5 @@ export function publishLoadReport(report) {
     ok: s.ok,
     pct: s.percentAfter,
   })));
-  console.log(`[TomatoLoad] Complete in ${report.totalMs}ms (${report.percent}%)`);
+  console.log(`[SimLoad] Complete in ${report.totalMs}ms (${report.percent}%)`);
 }
