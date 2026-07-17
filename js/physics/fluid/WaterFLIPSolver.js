@@ -336,6 +336,18 @@ export class WaterFLIPSolver {
     return removed;
   }
 
+  getSurfaceSloshEnergy(surfaceY, band = 0.012) {
+    let sum = 0;
+    let n = 0;
+    for (const m of this.markers) {
+      if (Math.abs(m.y - surfaceY) < band) {
+        sum += m.vx * m.vx + m.vy * m.vy + m.vz * m.vz;
+        n++;
+      }
+    }
+    return n ? Math.min(1, Math.sqrt(sum / n) * 6) : 0;
+  }
+
   getVolumeLiters() {
     return (this.markers.length * this.markerMass / this.rho * 1000).toFixed(1);
   }

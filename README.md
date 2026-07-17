@@ -49,7 +49,7 @@ Open **`water.html`** for interactive FLIP water in a glass tank with **click-to
 | R | Reset tank |
 | Space | Shock boil pulse |
 
-Bloom (High/Ultra), live table caustics, procedural sizzle audio, underwater bubbles.
+Bloom (High/Ultra), live table caustics, heat-shimmer distortion, HDR studio IBL, slosh audio.
 
 ## Controls (Tomato)
 

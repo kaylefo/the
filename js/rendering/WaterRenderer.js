@@ -28,6 +28,8 @@ const waterFragmentShader = /* glsl */ `
   uniform float uSSRStrength;
   uniform float uCameraNear;
   uniform float uCameraFar;
+  uniform samplerCube uEnvMap;
+  uniform float uEnvStrength;
   uniform mat4 uProjectionMatrixInverse;
   uniform mat4 uViewMatrixInverse;
 
@@ -106,8 +108,10 @@ const waterFragmentShader = /* glsl */ `
     float caustic = noise(vWorldPos.xz * 24.0 + uTime * 0.4) * max(0.0, -n.y) * 0.25;
 
     vec3 skyReflect = mix(vec3(0.15, 0.2, 0.28), vec3(0.85, 0.9, 0.95), pow(max(dot(vReflectDir, vec3(0, 1, 0)), 0.0), 4.0));
+    vec3 envReflect = uEnvStrength > 0.01 ? textureCube(uEnvMap, normalize(vReflectDir)).rgb : skyReflect;
+    vec3 fallbackReflect = mix(skyReflect, envReflect, clamp(uEnvStrength, 0.0, 1.0));
     vec3 ssr = traceSSR(vWorldPos, n, v, screenUV);
-    vec3 reflectColor = ssr.x >= 0.0 ? ssr : skyReflect;
+    vec3 reflectColor = ssr.x >= 0.0 ? ssr : fallbackReflect;
     vec3 color = mix(baseColor, reflectColor, fresnel * (0.35 + uSSRStrength * 0.45));
     color += uLightColor * spec;
     color += vec3(0.6, 0.75, 0.9) * caustic;
@@ -167,6 +171,8 @@ export class WaterRenderer {
         uSSRStrength: { value: 1 },
         uCameraNear: { value: 0.01 },
         uCameraFar: { value: 30 },
+        uEnvMap: { value: null },
+        uEnvStrength: { value: 0 },
         uProjectionMatrixInverse: { value: new THREE.Matrix4() },
         uViewMatrixInverse: { value: new THREE.Matrix4() },
       },
@@ -237,6 +243,11 @@ export class WaterRenderer {
   setCameraParams(near, far) {
     this.material.uniforms.uCameraNear.value = near;
     this.material.uniforms.uCameraFar.value = far;
+  }
+
+  setEnvMap(envMap, strength = 0.9) {
+    this.material.uniforms.uEnvMap.value = envMap;
+    this.material.uniforms.uEnvStrength.value = envMap ? strength : 0;
   }
 
   setLightDir(dir) {

@@ -13,6 +13,7 @@ import { BubbleSystem } from "./physics/fluid/BubbleSystem.js";
 import { PostProcessPipeline } from "./rendering/PostProcessPipeline.js";
 import { CausticsGenerator } from "./rendering/CausticsGenerator.js";
 import { createTableCausticsMaterial, createFloorCausticsMaterial } from "./rendering/TableCausticsMaterial.js";
+import { loadStudioEnvironment, applyEnvironmentToScene } from "./rendering/StudioEnvironment.js";
 
 const SCALE = 8;
 const LOOK_Y = 0.35;
@@ -40,6 +41,8 @@ export class WaterLabSimulation {
     this.surfaceY = 0.08;
     this.audio = new WaterLabAudio();
     this.bubbles = new BubbleSystem(300);
+    this.envMap = null;
+    this._heatProject = new THREE.Vector3();
 
     this.adaptive = new AdaptiveQuality(this.device, (q) => this.applyQuality(q));
     window.__waterLab = this;
@@ -54,6 +57,10 @@ export class WaterLabSimulation {
     this.waterRenderer?.applyQuality(settings);
     this.smokeRenderer?.applyQuality(settings);
     this.postProcess?.applyQuality(settings);
+    if (this.envMap) {
+      this.waterRenderer?.setEnvMap(this.envMap, settings.envStrength ?? 0.85);
+      applyEnvironmentToScene(this.scene, this.envMap, settings.envStrength ?? 0.85);
+    }
     this._applyRendererQuality();
     this.hud?.setQuality(this.device.summary());
   }
@@ -496,6 +503,25 @@ export class WaterLabSimulation {
     if (bub) bub.textContent = `Bubbles: ${this.bubbles.bubbles.length}`;
   }
 
+  _updateHeatScreenPoints() {
+    if (!this.postProcess) return;
+    const points = [];
+    for (const src of this.vaporization.activeSources) {
+      this._heatProject.set(
+        src.x * this.simScale,
+        src.y * this.simScale,
+        src.z * this.simScale
+      );
+      this._heatProject.project(this.camera);
+      points.push({
+        x: this._heatProject.x * 0.5 + 0.5,
+        y: this._heatProject.y * 0.5 + 0.5,
+        z: Math.min(1, src.intensity * (0.35 + this.vaporization.lastVaporRate * 0.9)),
+      });
+    }
+    this.postProcess.setHeatPoints(points, this.clock.elapsedTime, this.heatIntensity);
+  }
+
   update() {
     if (this.paused) return;
 
@@ -532,9 +558,11 @@ export class WaterLabSimulation {
     this.smokeRenderer.setCameraPos(this.camera.position);
 
     this.waterRenderer.renderWaterPass(this.renderer, this.scene, this.camera, this.smokeRenderer.mesh);
-    this.postProcess.render();
+    this._updateHeatScreenPoints();
+    this.postProcess.render(elapsed);
 
     this.audio.setVaporizationRate(this.vaporization.lastVaporRate);
+    this.audio.setSloshEnergy(this.water.getSurfaceSloshEnergy(this.surfaceY));
     this.audio.update(dt);
     this._updateHUD(dt);
   }
@@ -563,8 +591,9 @@ export const WATER_LOAD_STAGES = [
   { id: "engine_module", label: "Downloading water physics engine", weight: 14 },
   { id: "device_profile", label: "Detecting device & quality tier", weight: 7 },
   { id: "scene_3d", label: "Creating 3D scene & tank", weight: 10 },
-  { id: "webgl_renderer", label: "Initializing WebGL renderer", weight: 12 },
-  { id: "water_renderer", label: "Compiling water & smoke shaders", weight: 14 },
+  { id: "webgl_renderer", label: "Initializing WebGL renderer", weight: 10 },
+  { id: "studio_env", label: "Loading HDR studio environment", weight: 8 },
+  { id: "water_renderer", label: "Compiling water & smoke shaders", weight: 12 },
   { id: "lights_input", label: "Setting up lights & controls", weight: 8 },
   { id: "fluid_grid", label: "Allocating FLIP water grid", weight: 15 },
   { id: "smoke_grid", label: "Allocating volumetric smoke grid", weight: 12 },
@@ -595,8 +624,17 @@ export async function createWaterSimulation(canvas, loader) {
     await sim._yield();
   });
 
+  await loader.runStage("studio_env", async () => {
+    sim.envMap = await loadStudioEnvironment(sim.renderer, sim.scene);
+    applyEnvironmentToScene(sim.scene, sim.envMap, sim.quality.envStrength ?? 0.85);
+    await sim._yield();
+  });
+
   await loader.runStage("water_renderer", async () => {
     sim._initRendering();
+    if (sim.envMap) {
+      sim.waterRenderer.setEnvMap(sim.envMap, sim.quality.envStrength ?? 0.85);
+    }
     await sim._yield();
   });
 

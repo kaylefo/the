@@ -46,6 +46,15 @@ export class WaterLabAudio {
       this.hissGain.connect(this.master);
       this.hissSource.start();
 
+      this.sloshOsc = this.ctx.createOscillator();
+      this.sloshOsc.type = "sine";
+      this.sloshOsc.frequency.value = 38;
+      this.sloshGain = this.ctx.createGain();
+      this.sloshGain.gain.value = 0;
+      this.sloshOsc.connect(this.sloshGain);
+      this.sloshGain.connect(this.master);
+      this.sloshOsc.start();
+
       this.enabled = true;
       return true;
     } catch {
@@ -61,6 +70,14 @@ export class WaterLabAudio {
   setVaporizationRate(rate) {
     if (!this.enabled) return;
     this._targetHiss = Math.min(1, Math.max(0, rate));
+  }
+
+  /** @param {number} energy - surface slosh 0..1 */
+  setSloshEnergy(energy) {
+    if (!this.enabled || !this.sloshGain || !this.sloshOsc) return;
+    const e = Math.min(1, Math.max(0, energy));
+    this.sloshGain.gain.setTargetAtTime(e * 0.07, this.ctx.currentTime, 0.12);
+    this.sloshOsc.frequency.setTargetAtTime(32 + e * 28, this.ctx.currentTime, 0.15);
   }
 
   /** Short sizzle burst on click. */
@@ -114,6 +131,7 @@ export class WaterLabAudio {
   }
 
   dispose() {
+    this.sloshOsc?.stop();
     this.hissSource?.stop();
     this.ctx?.close();
     this.ctx = null;

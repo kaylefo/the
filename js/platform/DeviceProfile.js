@@ -234,6 +234,11 @@ export const WATER_QUALITY_TIERS = {
     bloomRadius: 0.48,
     bloomThreshold: 0.75,
     causticRes: 128,
+    heatShimmer: true,
+    shimmerStrength: 0.5,
+    filmGrain: true,
+    grainAmount: 0.04,
+    envStrength: 0.95,
   },
   high: {
     label: "High",
@@ -258,6 +263,10 @@ export const WATER_QUALITY_TIERS = {
     bloomRadius: 0.42,
     bloomThreshold: 0.8,
     causticRes: 96,
+    heatShimmer: true,
+    shimmerStrength: 0.42,
+    filmGrain: false,
+    envStrength: 0.85,
   },
   medium: {
     label: "Medium",
@@ -279,6 +288,10 @@ export const WATER_QUALITY_TIERS = {
     shadows: false,
     bloom: false,
     causticRes: 64,
+    heatShimmer: true,
+    shimmerStrength: 0.3,
+    filmGrain: false,
+    envStrength: 0.7,
   },
   low: {
     label: "Low",
@@ -300,6 +313,9 @@ export const WATER_QUALITY_TIERS = {
     shadows: false,
     bloom: false,
     causticRes: 48,
+    heatShimmer: false,
+    filmGrain: false,
+    envStrength: 0.5,
   },
 };
 
