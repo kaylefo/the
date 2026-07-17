@@ -511,6 +511,7 @@ export class WaterLabSimulation {
     this.bubbles.reset();
     this.condensation?.reset();
     this.vaporization.activeSources.length = 0;
+    this.water.temperature.reset();
     fillTank(this.water);
   }
 
@@ -623,6 +624,9 @@ export class WaterLabSimulation {
 
     const bub = document.getElementById("stat-bubbles");
     if (bub) bub.textContent = `Bubbles: ${this.bubbles.bubbles.length}`;
+
+    const tempEl = document.getElementById("stat-temp");
+    if (tempEl) tempEl.textContent = `Temp: ${this.water.maxTemperature.toFixed(0)} °C`;
 
     const solver = document.getElementById("stat-solver");
     if (solver) solver.textContent = `Smoke: ${this.smokeSolverMode}`;

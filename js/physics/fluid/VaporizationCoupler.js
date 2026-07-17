@@ -1,5 +1,8 @@
 /**
- * Click-driven heat injection and liquid → smoke mass transfer.
+ * Click-driven heat injection, temperature-coupled boiling, liquid → smoke transfer.
+ *
+ * Boiling rate modulated by local superheat from WaterTemperatureField:
+ *   ṁ_vap ∝ max(0, T − T_sat)^n
  */
 export class VaporizationCoupler {
   constructor(options = {}) {
@@ -49,6 +52,7 @@ export class VaporizationCoupler {
     let totalRemoved = 0;
     let vaporMass = 0;
     const foamEvents = [];
+    const g = water.grid;
 
     for (let si = this.activeSources.length - 1; si >= 0; si--) {
       const src = this.activeSources[si];
@@ -59,11 +63,18 @@ export class VaporizationCoupler {
       }
 
       const Q = this.baseHeatFlux * src.intensity * heatMultiplier;
+      water.injectHeat(src.x, src.y, src.z, Q, dt, this.radius);
+
+      const boilFactor = water.temperature.boilingIntensity(g, water.fluidMask, src.x, src.y, src.z);
+      const heatScale = 0.35 + boilFactor * 0.85;
+
       const r2 = this.radius * this.radius;
       const underwater = src.y < this.surfaceY - 0.004;
       const toRemove = [];
       const recoil = [];
       const bubbleSpawns = [];
+      let maxW = 0;
+      let ringStrength = 0;
 
       for (const m of water.markers) {
         const dx = m.x - src.x, dy = m.y - src.y, dz = m.z - src.z;
@@ -71,7 +82,11 @@ export class VaporizationCoupler {
         if (d2 > r2) continue;
 
         const w = Math.exp(-d2 / (r2 * 0.4));
-        const dm = Math.min(m.mass ?? water.markerMass, (Q * w * dt) / this.latentHeat);
+        maxW = Math.max(maxW, w);
+        const dm = Math.min(
+          m.mass ?? water.markerMass,
+          (Q * w * dt * heatScale) / this.latentHeat
+        );
         if (dm < 1e-8) continue;
 
         vaporMass += dm;
@@ -79,23 +94,25 @@ export class VaporizationCoupler {
         if (m.mass <= water.markerMass * 0.15) toRemove.push(m);
 
         const injectY = underwater ? this.surfaceY + 0.003 : src.y;
-        smoke.inject(src.x, injectY, src.z, dm / water.rho, 120 + 180 * w, {
+        const localBoil = water.temperature.boilingIntensity(g, water.fluidMask, m.x, m.y, m.z);
+        smoke.inject(src.x, injectY, src.z, (dm / water.rho) * (0.6 + localBoil * 0.8), 120 + 180 * w, {
           vx: dx * 2 + (Math.random() - 0.5) * 0.5,
-          vy: underwater ? 2.5 + Math.random() * 1.5 : 1.5 + Math.random() * 2.5,
+          vy: underwater ? 2.5 + Math.random() * 1.5 + localBoil : 1.5 + Math.random() * 2.5,
           vz: dz * 2 + (Math.random() - 0.5) * 0.5,
-          temp: 100 + 80 * w,
+          temp: 100 + 80 * w + localBoil * 40,
           radius: this.radius * (underwater ? 1.2 : 0.8),
         });
 
-        if (underwater && bubbles && w > 0.2 && Math.random() < 0.25) {
-          bubbleSpawns.push({ x: m.x, y: m.y, z: m.z, w });
+        if (underwater && bubbles && w > 0.2 && Math.random() < 0.15 + localBoil * 0.35) {
+          bubbleSpawns.push({ x: m.x, y: m.y, z: m.z, w: w * (0.5 + localBoil) });
         }
 
-        if (!underwater && w > 0.3 && Math.random() < 0.15) {
+        if (!underwater && w > 0.3 && Math.random() < 0.15 + boilFactor * 0.2) {
           foamEvents.push({ x: m.x, y: m.y + 0.002, z: m.z, scale: w });
         }
 
         recoil.push({ x: m.x, y: m.y, z: m.z, strength: w * 3 });
+        ringStrength = Math.max(ringStrength, w * src.intensity * (0.5 + localBoil));
         totalRemoved++;
         if (totalRemoved >= this.maxRemovePerFrame) break;
       }
@@ -115,9 +132,12 @@ export class VaporizationCoupler {
         }
       }
 
-      // Surface ring wave from underwater boil (recoil on free surface)
-      if (underwater && w > 0.25) {
-        water.applySurfaceRingImpulse(src.x, this.surfaceY, src.z, this.radius * 1.8, w * src.intensity * 0.35);
+      if (underwater && ringStrength > 0.2) {
+        water.applySurfaceRingImpulse(
+          src.x, this.surfaceY, src.z,
+          this.radius * 1.8,
+          ringStrength * 0.35
+        );
       }
     }
 

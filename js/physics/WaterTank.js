@@ -48,15 +48,11 @@ export function fillTank(solver, tank = TANK, fillRatio = tank.fillRatio) {
     for (let z = b.zMin + spacing * 0.5; z < b.zMax; z += spacing) {
       for (let y = b.yMin + spacing * 0.5; y < fillY; y += spacing) {
         if (solver.markers.length >= solver.maxMarkers) return;
-        solver.markers.push({
+        solver.markers.push(solver._createMarker({
           x: x + (Math.random() - 0.5) * jitter,
           y: y + (Math.random() - 0.5) * jitter,
           z: z + (Math.random() - 0.5) * jitter,
-          vx: 0,
-          vy: 0,
-          vz: 0,
-          mass: solver.markerMass,
-        });
+        }));
       }
     }
   }

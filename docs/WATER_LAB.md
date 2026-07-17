@@ -49,6 +49,17 @@ Physics runs at 120 Hz substeps (`PHYSICS_DT = 1/120`) with tier-dependent subst
 - **φ caustics** — CausticsGenerator traces level-set zero crossings for sharper floor caustics.
 - **Boil foam shader** — `uBoilIntensity` white crests tied to vaporization rate.
 
+### Phase 3 — research-grade numerics & thermodynamics
+
+- **APIC transfer** — Affine Particle-In-Cell P2G/G2P (Jiang et al. 2015) with per-marker \(\mathbf{C}\) matrix.
+- **Ghost-Fluid weighted Poisson** — Partial-cell face fractions \(\theta_{ij}\) from \(\phi\) (Gibou GFM).
+- **Jacobi-preconditioned CG** — \(M^{-1}=\mathrm{diag}(A)^{-1}\) on weighted Laplacian.
+- **`WaterTemperatureField`** — Advection–diffusion \(T\) with superheat boiling nucleation.
+- **Marangoni stress** — \((d\sigma/dT)\,\nabla T_\perp\) at free surface from temperature gradients.
+- **CFL substep clamp** — \(\Delta t \leq 0.45\,\Delta x/\|u\|_{max}\).
+- **Marker separation** — Periodic narrow-band de-clumping via spatial hash.
+- **Theory doc** — See [`docs/WATER_THEORY.md`](WATER_THEORY.md) for full PDE specification.
+
 ## Rendering pipeline
 
 ```
@@ -62,7 +73,8 @@ Scene (glass tank, water mesh, smoke volume, caustic floor/table)
 
 ### Physics
 
-- **`WaterFLIPSolver`** — FLIP/APIC hybrid water with signed-distance free surface, RB-GS + PCG pressure (Dirichlet p = 0 at air), grid + marker tank walls, CSF surface tension, vorticity confinement, spatial-hash XSPH, proper FLIP transfer (u += Δu_grid), surface ring impulses.
+- **`WaterFLIPSolver`** — FLIP/APIC hybrid with GFM weighted Poisson, Jacobi-PCG, CSF + Marangoni surface forces, temperature field, CFL clamp, marker separation. See `docs/WATER_THEORY.md`.
+- **`WaterTemperatureField`** — Semi-Lagrangian advection–diffusion with superheat boiling model.
 - **`WaterSmokeCoupler`** — Steam inherits surface slosh; submerged steam dragged by liquid velocity field.
 - **`VaporizationCoupler`** — Maps click heat to liquid mass removal, smoke injection, and boil ring waves.
 - **`StableFluidsSmoke`** — CPU stable-fluids on a 3D grid; active-cell sparse iteration for buoyancy/advection.

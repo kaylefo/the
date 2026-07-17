@@ -1,11 +1,16 @@
 import { Grid3D } from "../mpm/Grid3D.js";
+import { Mat3 } from "../mpm/Mat3.js";
 import { tankBounds } from "../WaterTank.js";
 import { SpatialHash } from "./SpatialHash.js";
+import { WaterTemperatureField } from "./WaterTemperatureField.js";
 
 /**
- * FLIP water solver with signed-distance free surface, red-black Gauss–Seidel
- * pressure projection, grid wall BCs, vorticity confinement, and proper FLIP
- * velocity transfer (particle += Δu_grid).
+ * Research-grade FLIP/APIC water solver:
+ * - Affine Particle-In-Cell transfer (Jiang et al. 2015)
+ * - Signed-distance φ + Ghost-Fluid weighted Poisson (Gibou et al.)
+ * - RB-GS warm-up + Jacobi-preconditioned CG pressure solve
+ * - CSF surface tension + Marangoni stress from ∇T
+ * - Semi-Lagrangian temperature advection–diffusion with boiling nucleation
  */
 export class WaterFLIPSolver {
   constructor(nx, ny, nz, origin, dx, tank) {
@@ -20,8 +25,13 @@ export class WaterFLIPSolver {
     this.sigma = 0.072;
     this.gravity = -9.81;
     this.flipRatio = 0.97;
+    this.apicEnabled = true;
     this.vorticityEpsilon = 0.15;
     this.xsphStrength = 0.04;
+    this.marangoniCoeff = -8e-5;
+    this.cflTarget = 0.45;
+    this.resampleInterval = 8;
+    this._stepCount = 0;
 
     this.markers = [];
     this.maxMarkers = 12000;
@@ -45,12 +55,16 @@ export class WaterFLIPSolver {
     this.cgZ = new Float32Array(n);
     this.cgP = new Float32Array(n);
     this.cgAp = new Float32Array(n);
+    this.faceWeight = new Float32Array(n * 6);
     this.spatialHash = new SpatialHash(dx * 1.2);
+    this.temperature = new WaterTemperatureField(n, dx);
     this.phi.fill(1e3);
 
     this.surfaceY = this.bounds.yMin + (this.bounds.yMax - this.bounds.yMin) * tank.fillRatio;
     this.sloshEnergy = 0;
     this.surfaceRipple = 0;
+    this.maxTemperature = 22;
+    this._stepCount = 0;
   }
 
   reset() {
@@ -60,10 +74,24 @@ export class WaterFLIPSolver {
     this.densityField.fill(0);
     this.sloshEnergy = 0;
     this.surfaceRipple = 0;
+    this.maxTemperature = 22;
+    this._stepCount = 0;
+    this.temperature.reset();
+  }
+
+  _createMarker(props) {
+    const C = new Mat3();
+    C.m.fill(0);
+    return {
+      vx: 0, vy: 0, vz: 0,
+      mass: this.markerMass,
+      C,
+      ...props,
+    };
   }
 
   step(dt) {
-    dt = Math.min(dt, 4e-4);
+    dt = this._clampCfl(dt);
     const g = this.grid;
     g.reset();
 
@@ -74,12 +102,16 @@ export class WaterFLIPSolver {
     this._buildLevelSet(g);
     this._reinitializePhi(g);
     this._classifyFluidCells(g);
+    this._computeFaceWeights(g);
     this._normalizeAndSaveGridVelocities(g);
     this._enforceGridWalls(g);
 
     this._applyForces(g, dt);
+    this._applyMarangoni(g, dt);
     this._vorticityConfinement(g, dt);
     this._enforceGridWalls(g);
+
+    this.temperature.step(g, this.fluidMask, dt, (x, y, z) => this._sampleGridVelocity(g, x, y, z));
 
     this._computeDivergence(g);
     this._solvePressure(this.pressureIterations);
@@ -87,7 +119,58 @@ export class WaterFLIPSolver {
     this._enforceGridWalls(g);
 
     this._updateMarkers(g, dt);
+
+    this._stepCount++;
+    if (this._stepCount % this.resampleInterval === 0) {
+      this._separateMarkers(this.dx * 0.55);
+    }
+
     this._updateSurfaceMetrics();
+    this.maxTemperature = this.temperature.getMaxTemp();
+  }
+
+  _clampCfl(dt) {
+    let vmax = 0;
+    for (const m of this.markers) {
+      const s2 = m.vx * m.vx + m.vy * m.vy + m.vz * m.vz;
+      if (s2 > vmax) vmax = s2;
+    }
+    vmax = Math.sqrt(vmax);
+    const cflDt = this.cflTarget * this.dx / (vmax + 1e-6);
+    return Math.min(dt, 4e-4, cflDt);
+  }
+
+  _faceWeightIdx(idx, face) {
+    return idx * 6 + face;
+  }
+
+  /** Ghost-Fluid face fractions θ ∈ [0,1] from φ (Gibou partial-cell weighting). */
+  _computeFaceWeights(g) {
+    const dx = this.dx;
+    for (let k = 1; k < g.nz - 1; k++) {
+      for (let j = 1; j < g.ny - 1; j++) {
+        for (let i = 1; i < g.nx - 1; i++) {
+          const idx = g.idx(i, j, k);
+          if (!this._isFluid(idx)) continue;
+          const phi = this.phi[idx];
+          const thetaAir = Math.max(0.15, Math.min(1, 0.5 - phi / dx));
+
+          const set = (face, nIdx) => {
+            this.faceWeight[this._faceWeightIdx(idx, face)] = this._isFluid(nIdx) ? 1 : thetaAir;
+          };
+          set(0, g.idx(i + 1, j, k));
+          set(1, g.idx(i - 1, j, k));
+          set(2, g.idx(i, j + 1, k));
+          set(3, g.idx(i, j - 1, k));
+          set(4, g.idx(i, j, k + 1));
+          set(5, g.idx(i, j, k - 1));
+        }
+      }
+    }
+  }
+
+  _theta(idx, face) {
+    return this.faceWeight[this._faceWeightIdx(idx, face)] || 1;
   }
 
   _transferMarker(m, g) {
@@ -101,6 +184,8 @@ export class WaterFLIPSolver {
     const wz = w.slice();
 
     const mp = m.mass ?? this.markerMass;
+    const C = m.C?.m;
+    const apic = this.apicEnabled && C;
 
     for (let gi = 0; gi < 3; gi++) {
       for (let gj = 0; gj < 3; gj++) {
@@ -110,10 +195,20 @@ export class WaterFLIPSolver {
           const weight = wx[gi] * wy[gj] * wz[gk];
           if (weight < 1e-10) continue;
           const idx = g.idx(i, j, k);
+
+          let vx = m.vx, vy = m.vy, vz = m.vz;
+          if (apic) {
+            const pos = g.worldPos(i, j, k);
+            const d0 = pos[0] - m.x, d1 = pos[1] - m.y, d2 = pos[2] - m.z;
+            vx += C[0] * d0 + C[3] * d1 + C[6] * d2;
+            vy += C[1] * d0 + C[4] * d1 + C[7] * d2;
+            vz += C[2] * d0 + C[5] * d1 + C[8] * d2;
+          }
+
           g.mass[idx] += weight * mp;
-          g.vx[idx] += weight * mp * m.vx;
-          g.vy[idx] += weight * mp * m.vy;
-          g.vz[idx] += weight * mp * m.vz;
+          g.vx[idx] += weight * mp * vx;
+          g.vy[idx] += weight * mp * vy;
+          g.vz[idx] += weight * mp * vz;
         }
       }
     }
@@ -297,11 +392,14 @@ export class WaterFLIPSolver {
             const gradY = (phiU - phiD) / (2 * dx);
             const gradZ = (phiF - phiB) / (2 * dx);
             const gradLen = Math.hypot(gradX, gradY, gradZ) + 1e-8;
-            const kappa = (phiR + phiL + phiU + phiD + phiB + phiF - 6 * phi) / dx2;
+            const nx = gradX / gradLen, ny = gradY / gradLen, nz = gradZ / gradLen;
+            const kappa = (
+              (phiR + phiL + phiU + phiD + phiB + phiF - 6 * phi) / dx2
+            );
             const stScale = this.sigma * kappa / this.rho;
-            vx += dt * stScale * (gradX / gradLen);
-            vy += dt * stScale * (gradY / gradLen);
-            vz += dt * stScale * (gradZ / gradLen);
+            vx += dt * stScale * nx;
+            vy += dt * stScale * ny;
+            vz += dt * stScale * nz;
           }
 
           g.vx[idx] = vx;
@@ -310,6 +408,48 @@ export class WaterFLIPSolver {
         }
       }
     }
+  }
+
+  /** Marangoni traction τ = (dσ/dT) ∇T_⊥ at the free surface (thermocapillary). */
+  _applyMarangoni(g, dt) {
+    const dx = this.dx;
+    const dSigmaDT = this.marangoniCoeff;
+
+    for (let k = 1; k < g.nz - 1; k++) {
+      for (let j = 1; j < g.ny - 1; j++) {
+        for (let i = 1; i < g.nx - 1; i++) {
+          const idx = g.idx(i, j, k);
+          if (!this._isFluid(idx)) continue;
+          if (Math.abs(this.phi[idx]) > dx * 2.5) continue;
+
+          const [gx, gy, gz] = this.temperature.gradientAt(g, i, j, k, this.fluidMask);
+          const phiL = this.phi[g.idx(i - 1, j, k)], phiR = this.phi[g.idx(i + 1, j, k)];
+          const phiD = this.phi[g.idx(i, j - 1, k)], phiU = this.phi[g.idx(i, j + 1, k)];
+          const phiB = this.phi[g.idx(i, j, k - 1)], phiF = this.phi[g.idx(i, j, k + 1)];
+          const nx = (phiR - phiL) / (2 * dx);
+          const ny = (phiU - phiD) / (2 * dx);
+          const nz = (phiF - phiB) / (2 * dx);
+          const nLen = Math.hypot(nx, ny, nz) + 1e-8;
+          const nnx = nx / nLen, nny = ny / nLen, nnz = nz / nLen;
+          const gDotN = gx * nnx + gy * nny + gz * nnz;
+          const tgx = gx - gDotN * nnx;
+          const tgy = gy - gDotN * nny;
+          const tgz = gz - gDotN * nnz;
+          const scale = dSigmaDT / this.rho;
+          g.vx[idx] += dt * scale * tgx;
+          g.vy[idx] += dt * scale * tgy;
+          g.vz[idx] += dt * scale * tgz;
+        }
+      }
+    }
+  }
+
+  _diagWeight(idx) {
+    return (
+      this._theta(idx, 0) + this._theta(idx, 1) +
+      this._theta(idx, 2) + this._theta(idx, 3) +
+      this._theta(idx, 4) + this._theta(idx, 5)
+    );
   }
 
   _curlAt(g, i, j, k) {
@@ -412,14 +552,24 @@ export class WaterFLIPSolver {
             const idx = g.idx(i, j, k);
             if (!this._isFluid(idx)) continue;
 
-            const pR = this._boundaryPressure(g.idx(i + 1, j, k), cur);
-            const pL = this._boundaryPressure(g.idx(i - 1, j, k), cur);
-            const pU = this._boundaryPressure(g.idx(i, j + 1, k), cur);
-            const pD = this._boundaryPressure(g.idx(i, j - 1, k), cur);
-            const pF = this._boundaryPressure(g.idx(i, j, k + 1), cur);
-            const pB = this._boundaryPressure(g.idx(i, j, k - 1), cur);
+            const idxR = g.idx(i + 1, j, k), idxL = g.idx(i - 1, j, k);
+            const idxU = g.idx(i, j + 1, k), idxD = g.idx(i, j - 1, k);
+            const idxF = g.idx(i, j, k + 1), idxB = g.idx(i, j, k - 1);
 
-            nxt[idx] = (pR + pL + pU + pD + pF + pB - this.divergence[idx] * dx2) / 6;
+            const wR = this._theta(idx, 0), wL = this._theta(idx, 1);
+            const wU = this._theta(idx, 2), wD = this._theta(idx, 3);
+            const wF = this._theta(idx, 4), wB = this._theta(idx, 5);
+            const diag = wR + wL + wU + wD + wF + wB;
+
+            const sum =
+              wR * this._boundaryPressure(idxR, cur) +
+              wL * this._boundaryPressure(idxL, cur) +
+              wU * this._boundaryPressure(idxU, cur) +
+              wD * this._boundaryPressure(idxD, cur) +
+              wF * this._boundaryPressure(idxF, cur) +
+              wB * this._boundaryPressure(idxB, cur);
+
+            nxt[idx] = (sum - this.divergence[idx] * dx2) / diag;
           }
         }
       }
@@ -440,14 +590,20 @@ export class WaterFLIPSolver {
         for (let i = 1; i < g.nx - 1; i++) {
           const idx = g.idx(i, j, k);
           if (!this._isFluid(idx)) continue;
+          const idxR = g.idx(i + 1, j, k), idxL = g.idx(i - 1, j, k);
+          const idxU = g.idx(i, j + 1, k), idxD = g.idx(i, j - 1, k);
+          const idxF = g.idx(i, j, k + 1), idxB = g.idx(i, j, k - 1);
+          const wR = this._theta(idx, 0), wL = this._theta(idx, 1);
+          const wU = this._theta(idx, 2), wD = this._theta(idx, 3);
+          const wF = this._theta(idx, 4), wB = this._theta(idx, 5);
           const sum =
-            this._boundaryPressure(g.idx(i + 1, j, k), x) +
-            this._boundaryPressure(g.idx(i - 1, j, k), x) +
-            this._boundaryPressure(g.idx(i, j + 1, k), x) +
-            this._boundaryPressure(g.idx(i, j - 1, k), x) +
-            this._boundaryPressure(g.idx(i, j, k + 1), x) +
-            this._boundaryPressure(g.idx(i, j, k - 1), x);
-          out[idx] = 6 * x[idx] - sum;
+            wR * this._boundaryPressure(idxR, x) +
+            wL * this._boundaryPressure(idxL, x) +
+            wU * this._boundaryPressure(idxU, x) +
+            wD * this._boundaryPressure(idxD, x) +
+            wF * this._boundaryPressure(idxF, x) +
+            wB * this._boundaryPressure(idxB, x);
+          out[idx] = this._diagWeight(idx) * x[idx] - sum;
         }
       }
     }
@@ -478,10 +634,16 @@ export class WaterFLIPSolver {
       if (this._isFluid(idx)) r[idx] -= Ap[idx];
     }
 
-    let rz = this._fluidDot(r, r);
+    for (let idx = 0; idx < g.count; idx++) {
+      if (this._isFluid(idx)) {
+        const d = this._diagWeight(idx);
+        z[idx] = d > 1e-8 ? r[idx] / d : r[idx];
+      }
+    }
+
+    let rz = this._fluidDot(r, z);
     if (rz < 1e-20) return;
 
-    z.set(r);
     q.set(z);
 
     for (let it = 0; it < maxIter; it++) {
@@ -493,11 +655,17 @@ export class WaterFLIPSolver {
       for (let idx = 0; idx < g.count; idx++) {
         if (this._isFluid(idx)) r[idx] -= alpha * Ap[idx];
       }
-      const rzNew = this._fluidDot(r, r);
+      for (let idx = 0; idx < g.count; idx++) {
+        if (this._isFluid(idx)) {
+          const d = this._diagWeight(idx);
+          z[idx] = d > 1e-8 ? r[idx] / d : r[idx];
+        }
+      }
+      const rzNew = this._fluidDot(r, z);
       if (rzNew < 1e-14) break;
       const beta = rzNew / rz;
       for (let idx = 0; idx < g.count; idx++) {
-        if (this._isFluid(idx)) q[idx] = r[idx] + beta * q[idx];
+        if (this._isFluid(idx)) q[idx] = z[idx] + beta * q[idx];
       }
       rz = rzNew;
     }
@@ -592,6 +760,9 @@ export class WaterFLIPSolver {
   _updateMarkers(g, dt) {
     const r = this.flipRatio;
     const h = this.dx * 1.1;
+    const invDx = g.invDx;
+    const w = [0, 0, 0], dw = [0, 0, 0];
+    const cellDist = new Float32Array(3);
 
     for (const m of this.markers) {
       const [dVx, dVy, dVz] = this._sampleGridDelta(g, m.x, m.y, m.z);
@@ -604,6 +775,40 @@ export class WaterFLIPSolver {
       m.vx = r * flipVx + (1 - r) * picVx;
       m.vy = r * flipVy + (1 - r) * picVy;
       m.vz = r * flipVz + (1 - r) * picVz;
+
+      if (this.apicEnabled && m.C) {
+        m.C.m.fill(0);
+        const { base, frac } = g.nodeFromWorld(m.x, m.y, m.z);
+        Grid3D.bsplineWeights(frac[0], w, dw);
+        const wx = w.slice();
+        Grid3D.bsplineWeights(frac[1], w, dw);
+        const wy = w.slice();
+        Grid3D.bsplineWeights(frac[2], w, dw);
+        const wz = w.slice();
+
+        for (let gi = 0; gi < 3; gi++) {
+          for (let gj = 0; gj < 3; gj++) {
+            for (let gk = 0; gk < 3; gk++) {
+              const i = base[0] + gi, j = base[1] + gj, k = base[2] + gk;
+              if (i < 0 || j < 0 || k < 0 || i >= g.nx || j >= g.ny || k >= g.nz) continue;
+              const weight = wx[gi] * wy[gj] * wz[gk];
+              if (weight < 1e-10) continue;
+              const idx = g.idx(i, j, k);
+              if (!this._isFluid(idx)) continue;
+              g.worldPos(i, j, k, cellDist);
+              cellDist[0] = (cellDist[0] - m.x) * invDx;
+              cellDist[1] = (cellDist[1] - m.y) * invDx;
+              cellDist[2] = (cellDist[2] - m.z) * invDx;
+              const cScale = 4 * invDx * weight;
+              const vx = g.vx[idx], vy = g.vy[idx], vz = g.vz[idx];
+              const C = m.C.m;
+              C[0] += cScale * vx * cellDist[0]; C[3] += cScale * vx * cellDist[1]; C[6] += cScale * vx * cellDist[2];
+              C[1] += cScale * vy * cellDist[0]; C[4] += cScale * vy * cellDist[1]; C[7] += cScale * vy * cellDist[2];
+              C[2] += cScale * vz * cellDist[0]; C[5] += cScale * vz * cellDist[1]; C[8] += cScale * vz * cellDist[2];
+            }
+          }
+        }
+      }
 
       m.x += m.vx * dt;
       m.y += m.vy * dt;
@@ -751,6 +956,37 @@ export class WaterFLIPSolver {
 
     this.sloshEnergy = count ? Math.min(1, Math.sqrt(velSum / count) * 6) : 0;
     this.surfaceRipple = count ? Math.min(1, (rippleSum / count) / (this.dx * 1.5) * 4) : 0;
+  }
+
+  /** Inject heat [W] at world position (feeds temperature field). */
+  injectHeat(x, y, z, powerWatts, dt, radius = this.dx * 3) {
+    this.temperature.injectHeat(this.grid, this.fluidMask, x, y, z, powerWatts, dt, radius);
+  }
+
+  _separateMarkers(minDist) {
+    const markers = this.markers;
+    const n = markers.length;
+    if (n < 2) return;
+    const minD2 = minDist * minDist;
+    const hash = this.spatialHash;
+    hash.clear();
+    for (let a = 0; a < n; a++) hash.insert(a, markers[a].x, markers[a].y, markers[a].z);
+
+    for (let a = 0; a < n; a++) {
+      const ma = markers[a];
+      hash.forEachNeighbor(ma.x, ma.y, ma.z, minDist, (b, r2) => {
+        if (a >= b) return;
+        const mb = markers[b];
+        const dx = ma.x - mb.x, dy = ma.y - mb.y, dz = ma.z - mb.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= minD2 || d2 < 1e-16) return;
+        const d = Math.sqrt(d2);
+        const push = (minDist - d) * 0.5;
+        const nx = dx / d, ny = dy / d, nz = dz / d;
+        ma.x += nx * push; ma.y += ny * push; ma.z += nz * push;
+        mb.x -= nx * push; mb.y -= ny * push; mb.z -= nz * push;
+      });
+    }
   }
 
   applyStirImpulse(x, y, z, vx, vy, vz, radius, strength) {
