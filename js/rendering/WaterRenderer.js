@@ -26,6 +26,8 @@ const waterFragmentShader = /* glsl */ `
   uniform float uTime;
   uniform float uQuality;
   uniform float uSSRStrength;
+  uniform float uSloshEnergy;
+  uniform float uSurfaceRipple;
   uniform float uCameraNear;
   uniform float uCameraFar;
   uniform samplerCube uEnvMap;
@@ -80,10 +82,12 @@ const waterFragmentShader = /* glsl */ `
     vec3 v = normalize(vViewDir);
     vec3 l = normalize(uLightDir);
 
-    // Micro ripples
-    vec2 uv = vWorldPos.xz * 12.0 + uTime * 0.15;
+    // Micro ripples — amplitude driven by live slosh energy from FLIP solver
+    float rippleAmp = 0.04 + uSloshEnergy * 0.18 + uSurfaceRipple * 0.12;
+    vec2 uv = vWorldPos.xz * 12.0 + uTime * (0.12 + uSloshEnergy * 0.35);
     float rip = noise(uv) * 0.5 + noise(uv * 2.3 + 1.7) * 0.25;
-    n = normalize(n + vec3(rip * 0.08, 0.0, rip * 0.06));
+    float gerstner = sin(vWorldPos.x * 28.0 + uTime * 1.8) * cos(vWorldPos.z * 24.0 - uTime * 1.4) * uSloshEnergy * 0.06;
+    n = normalize(n + vec3(rip * rippleAmp + gerstner, 0.0, rip * rippleAmp * 0.75));
 
     float NdotV = max(dot(n, v), 0.0);
     float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
@@ -169,6 +173,8 @@ export class WaterRenderer {
         uTime: { value: 0 },
         uQuality: { value: 1 },
         uSSRStrength: { value: 1 },
+        uSloshEnergy: { value: 0 },
+        uSurfaceRipple: { value: 0 },
         uCameraNear: { value: 0.01 },
         uCameraFar: { value: 30 },
         uEnvMap: { value: null },
@@ -256,6 +262,11 @@ export class WaterRenderer {
 
   setTime(t) {
     this.material.uniforms.uTime.value = t;
+  }
+
+  setSurfaceDynamics(sloshEnergy, surfaceRipple) {
+    this.material.uniforms.uSloshEnergy.value = sloshEnergy;
+    this.material.uniforms.uSurfaceRipple.value = surfaceRipple;
   }
 
   _ensureBuffers(vertCount) {

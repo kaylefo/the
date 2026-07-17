@@ -514,6 +514,10 @@ export class WaterLabSimulation {
 
   _physicsStep(dt) {
     this.water.step(dt);
+
+    this.surfaceY = this.water.surfaceY;
+    this.vaporization.setSurfaceY(this.surfaceY);
+
     const vapor = this.vaporization.step(this.water, this.smoke, dt, this.heatIntensity, this.bubbles);
     if (vapor.foamEvents?.length) {
       this.waterRenderer.spawnFoam(vapor.foamEvents, this.simScale);
@@ -685,6 +689,7 @@ export class WaterLabSimulation {
     }
 
     this.waterRenderer.setTime(this.clock.elapsedTime);
+    this.waterRenderer.setSurfaceDynamics(this.water.sloshEnergy, this.water.surfaceRipple);
     this.smokeRenderer.setCameraPos(this.camera.position);
 
     this.waterRenderer.renderWaterPass(this.renderer, this.scene, this.camera, this.smokeRenderer.mesh);
@@ -693,7 +698,7 @@ export class WaterLabSimulation {
     this.postProcess.render(elapsed);
 
     this.audio.setVaporizationRate(this.vaporization.lastVaporRate);
-    this.audio.setSloshEnergy(this.water.getSurfaceSloshEnergy(this.surfaceY));
+    this.audio.setSloshEnergy(this.water.sloshEnergy);
     this.audio.update(dt);
     this._updateHUD(dt);
   }

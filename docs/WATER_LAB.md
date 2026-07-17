@@ -23,6 +23,22 @@ Smoke grid    → SmokeVolumeRenderer (3D texture raymarch)
 
 Physics runs at 120 Hz substeps (`PHYSICS_DT = 1/120`) with tier-dependent substep count.
 
+### WaterFLIPSolver step order
+
+1. **P2G** — Marker mass/momentum to collocated grid (quadratic B-spline).
+2. **Level set** — Signed distance φ from markers; narrow-band redistancing (|∇φ| ≈ 1).
+3. **Fluid mask** — Cells with φ < ε or mass > 0 treated as incompressible fluid.
+4. **Save u_old** — Grid velocities normalized and stored for FLIP transfer.
+5. **Grid wall BCs** — Reflect normal velocity at tank walls.
+6. **Forces** — Viscosity (μ = 1 mPa·s), gravity, CSF surface tension (σ = 0.072 N/m).
+7. **Vorticity confinement** — Fedkiw-style ω × ∇|ω| to preserve small-scale eddies when stirring.
+8. **Divergence** — Central differences on fluid cells only.
+9. **Pressure** — Red-black Gauss–Seidel Poisson solve; **p = 0** at air neighbors (free surface).
+10. **Pressure gradient** — Project velocity to divergence-free field.
+11. **G2P** — FLIP: u_particle += interp(Δu_grid); blend 97% FLIP / 3% PIC.
+12. **XSPH** — Light inter-marker cohesion to reduce surface noise.
+13. **Surface metrics** — Track dynamic surface Y, slosh energy, ripple amplitude for audio/shaders.
+
 ## Rendering pipeline
 
 ```
@@ -36,7 +52,7 @@ Scene (glass tank, water mesh, smoke volume, caustic floor/table)
 
 ### Physics
 
-- **`WaterFLIPSolver`** — FLIP/APIC hybrid water with wall boundaries, surface tension, marker particles.
+- **`WaterFLIPSolver`** — FLIP/APIC hybrid water with signed-distance free surface, red-black Gauss–Seidel pressure projection (Dirichlet p = 0 at air), grid + marker tank walls, CSF surface tension, vorticity confinement, XSPH cohesion, and proper FLIP velocity transfer (u += Δu_grid).
 - **`VaporizationCoupler`** — Maps click heat to liquid mass removal and smoke injection.
 - **`StableFluidsSmoke`** — CPU stable-fluids on a 3D grid; active-cell sparse iteration for buoyancy/advection.
 - **`WebGPUSmokeAccelerator`** — Optional WGSL compute density advection (Ultra tier, 1-frame readback latency).
@@ -45,7 +61,7 @@ Scene (glass tank, water mesh, smoke volume, caustic floor/table)
 
 ### Rendering
 
-- **`WaterRenderer`** — Photoreal water (Fresnel, refraction, SSR, foam, env map).
+- **`WaterRenderer`** — Photoreal water (Fresnel, refraction, SSR, slosh-driven Gerstner ripples, foam, env map).
 - **`SmokeVolumeRenderer`** — Ray-marched 3D smoke with Henyey–Greenstein phase; temporal blend for smooth steam.
 - **`GlassTankRenderer`** — Custom glass shader with condensation map, droplet normal perturbation, env reflections.
 - **`CausticsGenerator`** — Density laplacian caustics projected onto table/floor.
