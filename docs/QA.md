@@ -48,6 +48,9 @@ High quality for this app means **all** of the following:
 
 ### 3.1 Smoke tests (every release)
 
+- [ ] **Tap to Begin** gate appears before any loading
+- [ ] Percent progress advances 0→100 with stage log entries
+- [ ] `window.__loadReport` populated in console after successful load
 - [ ] Page loads at `/the/` on GitHub Pages
 - [ ] Loading screen dismisses within 5s on desktop
 - [ ] Loading screen dismisses within 8s on mobile

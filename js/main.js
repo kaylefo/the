@@ -1,68 +1,77 @@
-import { probeWebGL, showFatalError, updateLoadingProgress, yieldToMain } from "./platform/WebGLProbe.js";
+import { probeWebGL, yieldToMain } from "./platform/WebGLProbe.js";
+import { LoadingManager, LOAD_STAGES } from "./platform/LoadingManager.js";
+import { LoadingUI, publishLoadReport } from "./ui/LoadingUI.js";
 import { createSimulation } from "./TomatoSimulation.js";
 
-const LOAD_TIMEOUT_MS = 45000;
+const LOAD_TIMEOUT_MS = 90000;
 
-function installGlobalErrorHandlers() {
+function installGlobalErrorHandlers(loadingUI, loader) {
   window.addEventListener("error", (e) => {
     if (e.message?.includes("Import") || e.filename?.includes(".js")) {
-      showFatalError(
+      loadingUI.showError(
         "Failed to load simulation scripts.",
-        e.message || "Check your network connection and try again."
+        e.message || "Check your network connection and try again.",
+        loader?.getReport()
       );
     }
   });
   window.addEventListener("unhandledrejection", (e) => {
-    showFatalError(
+    loadingUI.showError(
       "The simulation failed to start.",
-      e.reason?.message ?? String(e.reason ?? "Unknown error")
+      e.reason?.message ?? String(e.reason ?? "Unknown error"),
+      loader?.getReport()
     );
   });
 }
 
-async function boot() {
-  installGlobalErrorHandlers();
+async function runLoadPipeline(loadingUI) {
+  const loader = new LoadingManager(LOAD_STAGES);
+  loadingUI.bind(loader);
+  installGlobalErrorHandlers(loadingUI, loader);
+
+  loader.markBootStart();
 
   const timeout = setTimeout(() => {
-    showFatalError(
+    loadingUI.showError(
       "Loading is taking longer than expected.",
-      "Try refreshing. On older phones, wait up to a minute for first load."
+      "Try refreshing. First load on mobile can take up to a minute.",
+      loader.getReport()
     );
   }, LOAD_TIMEOUT_MS);
 
   try {
-    updateLoadingProgress("Checking WebGL…");
-    await yieldToMain();
-
-    const glInfo = probeWebGL();
-    if (!glInfo.supported) {
-      showFatalError(
-        "Your browser does not support WebGL, which is required for the 3D simulation.",
-        "Try updating iOS/Safari or use Chrome/Firefox on desktop."
-      );
-      return;
-    }
-
-    updateLoadingProgress("Detecting device & selecting quality tier…");
-    await yieldToMain();
+    await loader.runStage("webgl_probe", async () => {
+      await yieldToMain();
+      const glInfo = probeWebGL();
+      if (!glInfo.supported) {
+        throw new Error("WebGL is not available. Update your browser or enable hardware acceleration.");
+      }
+      return glInfo;
+    });
 
     const canvas = document.getElementById("canvas");
-    if (!canvas) {
-      showFatalError("Canvas element not found.");
-      return;
-    }
+    if (!canvas) throw new Error("Canvas element not found.");
 
-    const sim = await createSimulation(canvas, updateLoadingProgress);
-    sim.start();
+    const sim = await createSimulation(canvas, loader);
+    const report = loader.getReport();
+    publishLoadReport(report);
+    sim.start(loadingUI);
   } catch (err) {
     console.error(err);
-    showFatalError(
+    loadingUI.showError(
       "The simulation failed to start.",
-      err?.message ?? "Unknown error"
+      err?.message ?? "Unknown error",
+      loader.getReport()
     );
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function boot() {
+  const loadingUI = new LoadingUI();
+  await loadingUI.waitForBegin();
+  await runLoadPipeline(loadingUI);
 }
 
 boot();

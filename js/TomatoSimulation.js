@@ -32,40 +32,7 @@ export class TomatoSimulation {
     this.damageField = { data: null, origin: null, dx: 0 };
 
     this.adaptive = new AdaptiveQuality(this.device, (q) => this.applyQuality(q));
-
-    // Scene must exist before renderer (camera required for resize)
-    this._initScene();
-    this._initRenderer();
-    this._initRendering();
-    this._initValidation();
-    this._initInput();
-    this._initLights();
-    this._applyRendererQuality();
-
-    this.clock = new THREE.Clock();
-    this.accumulator = 0;
-    this.fixedDt = 1 / this.quality.fixedFps;
-    this.fpsFrames = 0;
-    this.fpsTime = 0;
-
     window.__tomatoSim = this;
-  }
-
-  /** Heavy physics setup — call async so loading UI can update. */
-  async initialize(onProgress) {
-    onProgress?.(`Initializing MPM grid (${this.quality.gridSize}³)…`);
-    await this._yield();
-
-    this._initPhysicsShell();
-    onProgress?.("Building tomato tissue particles…");
-    await this._yield();
-
-    this.resetTomato();
-    onProgress?.("Generating surface mesh…");
-    await this._yield();
-
-    this._updateMesh();
-    onProgress?.("Ready");
   }
 
   _yield() {
@@ -426,9 +393,18 @@ export class TomatoSimulation {
     this.renderer.render(this.scene, this.camera);
   }
 
-  start() {
+  initClock() {
+    this.clock = new THREE.Clock();
+    this.accumulator = 0;
+    this.fixedDt = 1 / this.quality.fixedFps;
+    this.fpsFrames = 0;
+    this.fpsTime = 0;
+  }
+
+  start(loadingUI) {
     if (this.running) return;
     this.running = true;
+    loadingUI?.hide();
     document.getElementById("loading")?.classList.add("hidden");
     const loop = () => {
       this.update();
@@ -438,14 +414,76 @@ export class TomatoSimulation {
   }
 }
 
-export async function createSimulation(canvas, onProgress) {
-  const device = new DeviceProfile();
-  const hud = new MobileHUD(device);
-  hud.setQuality(device.summary());
-
-  await new Promise((r) => requestAnimationFrame(r));
+export async function createSimulation(canvas, loader) {
+  const { device, hud } = await loader.runStage("device_profile", async () => {
+    await new Promise((r) => requestAnimationFrame(r));
+    const device = new DeviceProfile();
+    const hud = new MobileHUD(device);
+    hud.setQuality(device.summary());
+    return { device, hud };
+  });
 
   const sim = new TomatoSimulation(canvas, { device, hud });
-  await sim.initialize(onProgress);
+
+  await loader.runStage("scene_3d", async () => {
+    sim._initScene();
+    await sim._yield();
+  });
+
+  await loader.runStage("webgl_renderer", async () => {
+    sim._initRenderer();
+    await sim._yield();
+  });
+
+  await loader.runStage("tomato_renderer", async () => {
+    sim._initRendering();
+    sim._initValidation();
+    await sim._yield();
+  });
+
+  await loader.runStage("lights_input", async () => {
+    sim._initLights();
+    sim._initInput();
+    sim._applyRendererQuality();
+    sim.initClock();
+    await sim._yield();
+  });
+
+  await loader.runStage("mpm_grid", async () => {
+    sim._initPhysicsShell();
+    await sim._yield();
+  });
+
+  await loader.runStage("anatomy_particles", async () => {
+    loader.setSubProgress(0.1);
+    sim.mpm.reset();
+    sim.flip.reset();
+    sim.forceRecorder.reset();
+    loader.setSubProgress(0.4);
+    await sim._yield();
+    buildTomatoParticles(sim.mpm, {
+      radius: 0.038,
+      center: [0, 0.043, 0],
+      ...sim._particleOptions,
+    });
+    loader.setSubProgress(0.85);
+    const bounds = getTomatoBounds(sim.mpm);
+    sim.mpm.pressRestY = bounds.maxY + 0.06;
+    sim.mpm.pressPlateY = sim.mpm.pressRestY;
+    sim._updatePlateVisual();
+    loader.setSubProgress(1);
+    await sim._yield();
+  });
+
+  await loader.runStage("surface_mesh", async () => {
+    sim._updateMesh();
+    await sim._yield();
+  });
+
+  await loader.runStage("finalize", async () => {
+    sim.renderer.render(sim.scene, sim.camera);
+    await sim._yield();
+  });
+
   return sim;
 }

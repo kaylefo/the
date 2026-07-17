@@ -58,7 +58,21 @@
   </div>
 
   <div id="loading">
-    <p id="loading-text">Initializing simulation…</p>
+    <div id="loading-gate" class="loading-card">
+      <h2>Tomato Squash Lab</h2>
+      <p class="gate-sub">Multiphysics MPM simulation · requires WebGL</p>
+      <p class="gate-hint">Loading starts only after you tap — this avoids mobile browser errors.</p>
+      <button id="begin-btn" type="button">Tap to Begin</button>
+    </div>
+
+    <div id="loading-progress" class="loading-card" hidden>
+      <div id="load-percent" class="load-percent">0%</div>
+      <div class="load-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="load-bar-fill" class="load-bar-fill"></div>
+      </div>
+      <p id="loading-text">Preparing…</p>
+      <ul id="loading-metrics" class="loading-metrics" aria-live="polite"></ul>
+    </div>
   </div>
 
   <script type="importmap">
@@ -69,6 +83,6 @@
     }
   }
   </script>
-  <script type="module" src="js/main.js?v=3"></script>
+  <script type="module" src="js/main.js?v=4"></script>
 </body>
 </html>
