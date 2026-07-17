@@ -96,8 +96,10 @@ export function buildTomatoParticles(mpm, options = {}) {
   }
 
   // Locule fluid reservoir particles (pre-rupture juice)
+  const loculeCount = options.loculeFluidCount ?? 60;
   for (const lc of loculeCenters) {
-    for (let j = 0; j < 60; j++) {
+    const perLocule = Math.ceil(loculeCount / loculeCenters.length);
+    for (let j = 0; j < perLocule; j++) {
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       const lr = loculeRadius * 0.65 * Math.cbrt(Math.random());

@@ -19,6 +19,7 @@ export class FLIPSolver {
 
     this.markers = [];
     this.maxMarkers = 8000;
+    this.pressureIterations = 40;
 
     this.pressure = new Float32Array(this.grid.count);
     this.divergence = new Float32Array(this.grid.count);
@@ -60,7 +61,7 @@ export class FLIPSolver {
 
     // Pressure projection (Jacobi Poisson solve)
     this._computeDivergence(g);
-    this._solvePressure(40);
+    this._solvePressure(this.pressureIterations);
 
     // Apply pressure gradient
     this._applyPressure(g, dt);

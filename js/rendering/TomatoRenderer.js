@@ -26,6 +26,7 @@ const tomatoFragmentShader = /* glsl */ `
   uniform vec3 uLightColor;
   uniform float uTime;
   uniform float uWetness;
+  uniform float uQuality;
 
   varying vec3 vNormal;
   varying vec3 vWorldPos;
@@ -33,7 +34,6 @@ const tomatoFragmentShader = /* glsl */ `
   varying float vDamage;
   varying float vThickness;
 
-  // Jensen dipole diffusion approximation (BSSRDF)
   vec3 subsurface(vec3 n, vec3 l, vec3 rd, float thickness) {
     float wrap = max(0.0, (dot(n, l) + 0.45) / 1.45);
     float back = max(0.0, dot(-n, l)) * exp(-thickness * 8.0);
@@ -51,8 +51,7 @@ const tomatoFragmentShader = /* glsl */ `
     float NdotH = max(dot(n, h), 0.0);
     float NdotV = max(dot(n, v), 0.0);
 
-    // Dual-lobe specular (dry skin + wet film)
-    float alphaDry = 0.18;
+    float alphaDry = mix(0.22, 0.18, uQuality);
     float alphaWet = 0.04;
     float Ddry = exp((NdotH * NdotH - 1.0) / (alphaDry * alphaDry));
     float Dwet = exp((NdotH * NdotH - 1.0) / (alphaWet * alphaWet));
@@ -64,8 +63,6 @@ const tomatoFragmentShader = /* glsl */ `
 
     vec3 fresnel = vec3(0.04 + 0.96 * pow(1.0 - NdotV, 5.0));
     vec3 color = diffuse + fresnel * spec * uLightColor;
-
-    // Internal glow at rupture
     color += vec3(1.0, 0.3, 0.1) * vDamage * vDamage * 0.4;
 
     gl_FragColor = vec4(color, 1.0 - vDamage * 0.15);
@@ -73,15 +70,27 @@ const tomatoFragmentShader = /* glsl */ `
 `;
 
 export class TomatoRenderer {
-  constructor(scene) {
+  constructor(scene, quality = {}) {
     this.scene = scene;
+    this.quality = quality;
     this.mesh = null;
-    this.damageAttr = null;
-    this.thicknessAttr = null;
     this.wetness = 0;
+    this._maxVerts = 0;
+    this._posBuffer = null;
+    this._nrmBuffer = null;
+    this._dmgBuffer = null;
+    this._thkBuffer = null;
 
     this._initMaterial();
-    this._initFluidPoints();
+    this._initFluidPoints(quality.flipMaxMarkers ?? 8000, quality.fluidPointSize ?? 0.003);
+  }
+
+  applyQuality(quality) {
+    this.quality = quality;
+    this.material.uniforms.uQuality.value = quality.gridSize >= 32 ? 1 : quality.gridSize >= 24 ? 0.6 : 0.3;
+    if (this.fluidPoints) {
+      this.fluidPoints.material.size = quality.fluidPointSize ?? 0.003;
+    }
   }
 
   _initMaterial() {
@@ -93,6 +102,7 @@ export class TomatoRenderer {
         uLightColor: { value: new THREE.Vector3(1, 0.95, 0.9) },
         uTime: { value: 0 },
         uWetness: { value: 0 },
+        uQuality: { value: 1 },
       },
       transparent: true,
       side: THREE.DoubleSide,
@@ -105,8 +115,7 @@ export class TomatoRenderer {
     this.scene.add(this.mesh);
   }
 
-  _initFluidPoints() {
-    const maxPts = 8000;
+  _initFluidPoints(maxPts, pointSize) {
     const geo = new THREE.BufferGeometry();
     this.fluidPositions = new Float32Array(maxPts * 3);
     geo.setAttribute("position", new THREE.BufferAttribute(this.fluidPositions, 3));
@@ -114,7 +123,7 @@ export class TomatoRenderer {
       geo,
       new THREE.PointsMaterial({
         color: 0xff1800,
-        size: 0.003,
+        size: pointSize,
         transparent: true,
         opacity: 0.8,
         blending: THREE.AdditiveBlending,
@@ -122,30 +131,53 @@ export class TomatoRenderer {
         sizeAttenuation: true,
       })
     );
-    this.fluidCount = 0;
+    this.fluidMax = maxPts;
     this.scene.add(this.fluidPoints);
   }
 
-  updateMesh(mcResult, damageField, nx, ny, nz) {
-    const geo = this.mesh.geometry;
-    geo.setAttribute("position", new THREE.BufferAttribute(mcResult.positions, 3));
-    geo.setAttribute("normal", new THREE.BufferAttribute(mcResult.normals, 3));
+  _ensureBuffers(vertCount) {
+    if (vertCount <= this._maxVerts) return;
+    this._maxVerts = Math.max(vertCount, Math.ceil(vertCount * 1.25));
+    this._posBuffer = new Float32Array(this._maxVerts * 3);
+    this._nrmBuffer = new Float32Array(this._maxVerts * 3);
+    this._dmgBuffer = new Float32Array(this._maxVerts);
+    this._thkBuffer = new Float32Array(this._maxVerts);
+  }
 
+  updateMesh(mcResult, damageField, nx, ny, nz) {
     const vertCount = mcResult.positions.length / 3;
-    const damage = new Float32Array(vertCount);
-    const thickness = new Float32Array(vertCount);
+    if (vertCount === 0) return;
+
+    this._ensureBuffers(vertCount);
+    this._posBuffer.set(mcResult.positions.subarray(0, vertCount * 3));
+    this._nrmBuffer.set(mcResult.normals.subarray(0, vertCount * 3));
 
     for (let v = 0; v < vertCount; v++) {
       const x = mcResult.positions[v * 3];
       const y = mcResult.positions[v * 3 + 1];
       const z = mcResult.positions[v * 3 + 2];
       const d = this._sampleField(damageField, x, y, z, nx, ny, nz);
-      damage[v] = d;
-      thickness[v] = 0.02 + (1 - d) * 0.04;
+      this._dmgBuffer[v] = d;
+      this._thkBuffer[v] = 0.02 + (1 - d) * 0.04;
     }
 
-    geo.setAttribute("aDamage", new THREE.BufferAttribute(damage, 1));
-    geo.setAttribute("aThickness", new THREE.BufferAttribute(thickness, 1));
+    const geo = this.mesh.geometry;
+    if (!geo.getAttribute("position") || geo.getAttribute("position").count < vertCount) {
+      geo.setAttribute("position", new THREE.BufferAttribute(this._posBuffer.slice(0, vertCount * 3), 3));
+      geo.setAttribute("normal", new THREE.BufferAttribute(this._nrmBuffer.slice(0, vertCount * 3), 3));
+      geo.setAttribute("aDamage", new THREE.BufferAttribute(this._dmgBuffer.slice(0, vertCount), 1));
+      geo.setAttribute("aThickness", new THREE.BufferAttribute(this._thkBuffer.slice(0, vertCount), 1));
+    } else {
+      geo.getAttribute("position").array.set(this._posBuffer.subarray(0, vertCount * 3));
+      geo.getAttribute("normal").array.set(this._nrmBuffer.subarray(0, vertCount * 3));
+      geo.getAttribute("aDamage").array.set(this._dmgBuffer.subarray(0, vertCount));
+      geo.getAttribute("aThickness").array.set(this._thkBuffer.subarray(0, vertCount));
+      geo.getAttribute("position").needsUpdate = true;
+      geo.getAttribute("normal").needsUpdate = true;
+      geo.getAttribute("aDamage").needsUpdate = true;
+      geo.getAttribute("aThickness").needsUpdate = true;
+    }
+    geo.setDrawRange(0, vertCount);
     geo.computeBoundingSphere();
   }
 
@@ -161,15 +193,15 @@ export class TomatoRenderer {
   }
 
   updateFluid(markers) {
-    this.fluidCount = Math.min(markers.length, this.fluidPositions.length / 3);
-    for (let i = 0; i < this.fluidCount; i++) {
+    const count = Math.min(markers.length, this.fluidMax);
+    for (let i = 0; i < count; i++) {
       this.fluidPositions[i * 3] = markers[i].x;
       this.fluidPositions[i * 3 + 1] = markers[i].y;
       this.fluidPositions[i * 3 + 2] = markers[i].z;
     }
     this.fluidPoints.geometry.attributes.position.needsUpdate = true;
-    this.fluidPoints.geometry.setDrawRange(0, this.fluidCount);
-    this.wetness = Math.min(1, this.fluidCount / 2000);
+    this.fluidPoints.geometry.setDrawRange(0, count);
+    this.wetness = Math.min(1, count / 2000);
     this.material.uniforms.uWetness.value = this.wetness;
   }
 

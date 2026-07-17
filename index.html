@@ -2,16 +2,29 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hyper-Realistic Tomato Squashing Physics</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0e0c10" />
+  <meta name="description" content="Hyper-realistic tomato squashing physics — MPM, fracture, FLIP fluid." />
+  <title>Tomato Squash Lab</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
   <canvas id="canvas"></canvas>
 
+  <button id="hud-toggle" type="button" aria-label="Toggle controls panel" aria-expanded="false">☰</button>
+
   <div id="hud">
-    <h1>Tomato Squash Lab</h1>
-    <p class="subtitle">MPM neo-Hookean · phase-field fracture · FLIP Navier-Stokes</p>
+    <div class="hud-header">
+      <div>
+        <h1>Tomato Squash Lab</h1>
+        <p class="subtitle">MPM · fracture · FLIP fluid</p>
+      </div>
+      <span id="quality-badge" class="quality-badge">—</span>
+    </div>
+
     <div class="stats">
       <span id="stat-strain">Damage φ: 0%</span>
       <span id="stat-juice">Juice: 0 ml</span>
@@ -19,20 +32,34 @@
       <span id="stat-energy">Energy: — J</span>
       <span id="stat-fps">FPS: —</span>
     </div>
+
     <canvas id="force-chart" width="280" height="90"></canvas>
-    <div class="controls">
-      <p><kbd>Click + drag</kbd> move press plate down</p>
+
+    <div id="controls-desktop" class="controls">
+      <p><kbd>Click + drag</kbd> move press plate</p>
       <p><kbd>Scroll</kbd> adjust squeeze rate</p>
-      <p><kbd>R</kbd> reset · <kbd>Space</kbd> drop from height</p>
+      <p><kbd>R</kbd> reset · <kbd>Space</kbd> drop</p>
     </div>
+
+    <div id="controls-mobile" class="controls" hidden>
+      <p><strong>Drag</strong> on the scene to lower the press plate</p>
+      <p>Use the slider below to adjust squeeze speed</p>
+    </div>
+
     <div class="force-meter">
       <label for="force-slider">Squeeze rate</label>
       <input id="force-slider" type="range" min="0.5" max="4" step="0.05" value="1.5" />
     </div>
-    <button id="reset-btn" type="button">Reset Tomato</button>
+
+    <div class="action-row">
+      <button id="drop-btn" type="button" class="secondary-btn">Drop</button>
+      <button id="reset-btn" type="button">Reset</button>
+    </div>
   </div>
 
-  <div id="loading">Initializing MPM grid (32³) · neo-Hookean constitutive model…</div>
+  <div id="loading">
+    <p id="loading-text">Initializing simulation…</p>
+  </div>
 
   <script type="importmap">
   {

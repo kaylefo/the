@@ -2,6 +2,8 @@
 
 **Live demo:** [https://kaylefo.github.io/the/](https://kaylefo.github.io/the/)
 
+Mobile-ready with adaptive quality tiers (iPhone 16 Pro Max → budget Android). See [docs/QA.md](docs/QA.md) for the full test plan.
+
 Multiphysics browser simulation: **MPM solid mechanics**, **neo-Hookean hyperelasticity**, **phase-field fracture**, **FLIP Navier-Stokes juice**, anatomical tissue layers, and **BSSRDF subsurface rendering**.
 
 ## Physics stack
