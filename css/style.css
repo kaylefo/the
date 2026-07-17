@@ -110,15 +110,28 @@ body {
   opacity: 0.6;
 }
 
-.stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin: 12px 0 8px;
-  font-size: 0.7rem;
-  font-variant-numeric: tabular-nums;
-  color: #ffd4c8;
-}
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin: 12px 0 8px;
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: #ffd4c8;
+  }
+
+  .water-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 8px;
+  }
+
+  @media (min-width: 769px) {
+    .water-stats {
+      display: flex;
+      flex-wrap: wrap;
+    }
+  }
 
 #force-chart {
   width: 100%;
@@ -334,6 +347,12 @@ body {
 #loading.hidden {
   opacity: 0;
   pointer-events: none;
+}
+
+body[data-sim-ready="true"] #loading {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
 }
 
 .error-panel {

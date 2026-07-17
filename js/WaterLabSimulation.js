@@ -730,11 +730,27 @@ export class WaterLabSimulation {
     this.running = true;
     loadingUI?.hide();
     document.getElementById("loading")?.classList.add("hidden");
+    document.body.dataset.simReady = "true";
     const loop = () => {
       this.update();
       requestAnimationFrame(loop);
     };
     loop();
+  }
+
+  getDiagnostics() {
+    return {
+      running: this.running,
+      frame: this.frame,
+      tier: this.device?.tier,
+      mobile: this.device?.mobile,
+      surfaceY: this.surfaceY,
+      heatIntensity: this.heatIntensity,
+      vaporRate: this.vaporization?.lastVaporRate ?? 0,
+      bubbleCount: this.bubbles?.bubbles?.length ?? 0,
+      smokeSolverMode: this.smokeSolverMode,
+      water: this.water?.getDiagnostics?.() ?? null,
+    };
   }
 }
 

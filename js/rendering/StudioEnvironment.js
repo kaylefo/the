@@ -10,6 +10,14 @@ export async function loadStudioEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileEquirectangularShader();
 
+  const e2e =
+    typeof window !== "undefined" &&
+    (window.__E2E__ || new URLSearchParams(window.location.search).has("e2e"));
+
+  if (e2e) {
+    return _proceduralStudio(pmrem, scene);
+  }
+
   try {
     const { RGBELoader } = await import("three/addons/loaders/RGBELoader.js");
     const loader = new RGBELoader();

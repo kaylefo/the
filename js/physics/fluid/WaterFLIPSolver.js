@@ -64,7 +64,7 @@ export class WaterFLIPSolver {
     this.sloshEnergy = 0;
     this.surfaceRipple = 0;
     this.maxTemperature = 22;
-    this._stepCount = 0;
+    this.lastPressureResidual = 0;
   }
 
   reset() {
@@ -75,6 +75,7 @@ export class WaterFLIPSolver {
     this.sloshEnergy = 0;
     this.surfaceRipple = 0;
     this.maxTemperature = 22;
+    this.lastPressureResidual = 0;
     this._stepCount = 0;
     this.temperature.reset();
   }
@@ -669,6 +670,7 @@ export class WaterFLIPSolver {
       }
       rz = rzNew;
     }
+    this.lastPressureResidual = Math.sqrt(this._fluidDot(r, r));
   }
 
   _applyPressure(g, dt) {
@@ -1072,5 +1074,26 @@ export class WaterFLIPSolver {
 
   getVolumeLiters() {
     return (this.markers.length * this.markerMass / this.rho * 1000).toFixed(1);
+  }
+
+  /** Runtime diagnostics for QA / E2E assertions. */
+  getDiagnostics() {
+    let fluidCells = 0;
+    for (let i = 0; i < this.fluidMask.length; i++) {
+      if (this.fluidMask[i]) fluidCells++;
+    }
+    return {
+      markers: this.markers.length,
+      volumeL: parseFloat(this.getVolumeLiters()),
+      surfaceY: this.surfaceY,
+      sloshEnergy: this.sloshEnergy,
+      surfaceRipple: this.surfaceRipple,
+      maxTemperature: this.maxTemperature,
+      pressureResidual: this.lastPressureResidual,
+      fluidCells,
+      apicEnabled: this.apicEnabled,
+      gridSize: [this.grid.nx, this.grid.ny, this.grid.nz],
+      dx: this.dx,
+    };
   }
 }

@@ -141,6 +141,11 @@ export class DeviceProfile {
   }
 
   _selectInitialTier() {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("e2e") || window.__E2E__) return "low";
+    }
+
     if (!this.mobile) {
       if (this.memoryGb >= 8 && this.cores >= 8) return "ultra";
       return "high";
@@ -334,8 +339,38 @@ export const WATER_QUALITY_TIERS = {
 };
 
 export class WaterDeviceProfile extends DeviceProfile {
+  _isE2E() {
+    return typeof window !== "undefined" &&
+      (window.__E2E__ || new URLSearchParams(window.location.search).has("e2e"));
+  }
+
   getSettings() {
-    return { ...WATER_QUALITY_TIERS[this.tier] };
+    const base = { ...WATER_QUALITY_TIERS[this.tier] };
+    if (!this._isE2E()) return base;
+    return {
+      ...base,
+      label: "E2E",
+      waterGridSize: 16,
+      flipMaxMarkers: 600,
+      flipIterations: 8,
+      smokeRes: 20,
+      smokeSteps: 12,
+      smokeInterval: 3,
+      maxPhysicsSteps: 1,
+      physicsSubsteps: 1,
+      meshInterval: 4,
+      shadowMapSize: 0,
+      maxPixelRatio: 1,
+      antialias: false,
+      shadows: false,
+      bloom: false,
+      causticRes: 32,
+      heatShimmer: false,
+      filmGrain: false,
+      godRays: false,
+      condensationRes: 16,
+      useWebGPU: false,
+    };
   }
 
   summary() {

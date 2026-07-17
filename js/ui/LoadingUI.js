@@ -74,6 +74,7 @@ export class LoadingUI {
   }
 
   showError(message, detail, report) {
+    if (document.body?.dataset?.simReady === "true") return;
     if (!this.loadingRoot) return;
     this.loadingRoot.classList.remove("hidden");
     this.gate?.setAttribute("hidden", "");
