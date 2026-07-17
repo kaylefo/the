@@ -84,6 +84,43 @@
     }
   }
   </script>
-  <script type="module" src="js/main.js?v=4"></script>
+
+  <!--
+    Early, dependency-free begin gate.
+    This classic (non-module) script runs the instant it is parsed, so the
+    "Tap to Begin" button responds immediately — even while the heavy module
+    graph (three.js, simulation) is still downloading, or if it never loads at
+    all. It flips the gate to the progress view for instant feedback and hands
+    control to the module via the __onBegin hook once (and only once) the user taps.
+  -->
+  <script>
+    (function () {
+      window.__beginRequested = false;
+      window.__onBegin = null;
+
+      function requestBegin() {
+        if (window.__beginRequested) return;
+        window.__beginRequested = true;
+
+        var gate = document.getElementById("loading-gate");
+        var progress = document.getElementById("loading-progress");
+        if (gate) gate.setAttribute("hidden", "");
+        if (progress) progress.removeAttribute("hidden");
+
+        if (typeof window.__onBegin === "function") {
+          try { window.__onBegin(); } catch (e) { /* module reports its own errors */ }
+        }
+      }
+
+      var btn = document.getElementById("begin-btn");
+      if (btn) {
+        btn.addEventListener("click", requestBegin);
+        // Some mobile browsers are flaky about synthesizing click; cover touch too.
+        btn.addEventListener("touchend", function (e) { e.preventDefault(); requestBegin(); }, { passive: false });
+      }
+    })();
+  </script>
+
+  <script type="module" src="js/main.js?v=5"></script>
 </body>
 </html>

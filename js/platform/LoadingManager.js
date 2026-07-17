@@ -116,6 +116,7 @@ export class LoadingManager {
 
 export const LOAD_STAGES = [
   { id: "webgl_probe", label: "Checking WebGL support", weight: 8 },
+  { id: "engine_module", label: "Downloading simulation engine", weight: 14 },
   { id: "device_profile", label: "Detecting device & quality tier", weight: 7 },
   { id: "scene_3d", label: "Creating 3D scene & camera", weight: 10 },
   { id: "webgl_renderer", label: "Initializing WebGL renderer", weight: 12 },

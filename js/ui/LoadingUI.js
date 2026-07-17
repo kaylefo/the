@@ -24,6 +24,20 @@ export class LoadingUI {
         resolve();
       };
 
+      // The inline bootstrap in index.html wires the button before this module
+      // finishes loading, so the tap is never missed on slow connections.
+      // If the user already tapped, proceed immediately; otherwise let the
+      // bootstrap notify us via the __onBegin hook.
+      if (typeof window !== "undefined") {
+        if (window.__beginRequested) {
+          start();
+          return;
+        }
+        window.__onBegin = start;
+      }
+
+      // Defensive fallback: also listen directly, in case the inline
+      // bootstrap did not run for some reason.
       this.beginBtn?.addEventListener("click", start);
     });
   }

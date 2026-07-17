@@ -1,7 +1,6 @@
 import { probeWebGL, yieldToMain } from "./platform/WebGLProbe.js";
 import { LoadingManager, LOAD_STAGES } from "./platform/LoadingManager.js";
 import { LoadingUI, publishLoadReport } from "./ui/LoadingUI.js";
-import { createSimulation } from "./TomatoSimulation.js";
 
 const LOAD_TIMEOUT_MS = 90000;
 
@@ -51,6 +50,15 @@ async function runLoadPipeline(loadingUI) {
 
     const canvas = document.getElementById("canvas");
     if (!canvas) throw new Error("Canvas element not found.");
+
+    // Load the heavy simulation engine (three.js + physics) only after the
+    // user has tapped "Begin". This keeps the gate responsive and honors the
+    // promise that no heavy loading happens before the tap. Any failure here
+    // (e.g. blocked CDN, unsupported browser) surfaces as the error panel.
+    const { createSimulation } = await loader.runStage("engine_module", async () => {
+      await yieldToMain();
+      return import("./TomatoSimulation.js");
+    });
 
     const sim = await createSimulation(canvas, loader);
     const report = loader.getReport();
