@@ -56,9 +56,21 @@ export class StableFluidsSmoke {
     const cx = opts.vx ?? 0, cy = opts.vy ?? 1, cz = opts.vz ?? 0;
     const temp = opts.temp ?? 100;
 
-    for (let k = 1; k < this.nz - 1; k++) {
-      for (let j = 1; j < this.ny - 1; j++) {
-        for (let i = 1; i < this.nx - 1; i++) {
+    const ax = (x - this.origin[0]) / this.dx;
+    const ay = (y - this.origin[1]) / this.dx;
+    const az = (z - this.origin[2]) / this.dx;
+    const ri = Math.ceil(r / this.dx);
+
+    const i0 = Math.max(1, Math.floor(ax) - ri);
+    const i1 = Math.min(this.nx - 2, Math.floor(ax) + ri);
+    const j0 = Math.max(1, Math.floor(ay) - ri);
+    const j1 = Math.min(this.ny - 2, Math.floor(ay) + ri);
+    const k0 = Math.max(1, Math.floor(az) - ri);
+    const k1 = Math.min(this.nz - 2, Math.floor(az) + ri);
+
+    for (let k = k0; k <= k1; k++) {
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
           const pos = this.worldPos(i, j, k);
           const dx = pos[0] - x, dy = pos[1] - y, dz = pos[2] - z;
           const d2 = dx * dx + dy * dy + dz * dz;

@@ -75,7 +75,7 @@ const smokeFragmentShader = /* glsl */ `
         float cosTheta = dot(rd, normalize(uLightDir));
         float phase = hg(cosTheta, g);
         float alpha = 1.0 - exp(-density * stepLen * 18.0);
-        vec3 scattered = smokeColor * uLightColor * phase * shadow * 1.4;
+        vec3 scattered = smokeColor * uLightColor * phase * shadow * 1.75;
         accum += transmittance * alpha * scattered;
         transmittance *= (1.0 - alpha);
       }

@@ -8,6 +8,8 @@ import { WaterRenderer } from "./rendering/WaterRenderer.js";
 import { SmokeVolumeRenderer } from "./rendering/SmokeVolumeRenderer.js";
 import { WaterDeviceProfile, AdaptiveQuality } from "./platform/DeviceProfile.js";
 import { MobileHUD } from "./ui/MobileHUD.js";
+import { WaterLabAudio } from "./audio/WaterLabAudio.js";
+import { BubbleSystem } from "./physics/fluid/BubbleSystem.js";
 
 const SCALE = 8;
 const LOOK_Y = 0.35;
@@ -32,6 +34,9 @@ export class WaterLabSimulation {
     this.paused = false;
     this.running = false;
     this.physicsSubsteps = this.quality.physicsSubsteps ?? 2;
+    this.surfaceY = 0.08;
+    this.audio = new WaterLabAudio();
+    this.bubbles = new BubbleSystem(300);
 
     this.adaptive = new AdaptiveQuality(this.device, (q) => this.applyQuality(q));
     window.__waterLab = this;
@@ -85,7 +90,10 @@ export class WaterLabSimulation {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.waterRenderer?.resize(w * this.renderer.getPixelRatio(), h * this.renderer.getPixelRatio());
+    this.waterRenderer?.resize(
+      this.renderer.domElement.width,
+      this.renderer.domElement.height
+    );
     this._updateCameraForViewport(w, h);
   }
 
@@ -184,6 +192,9 @@ export class WaterLabSimulation {
     this.vaporization = new VaporizationCoupler({
       maxRemovePerFrame: Math.round(q.flipMaxMarkers * 0.008),
     });
+    const b = tankBounds(TANK);
+    this.surfaceY = b.yMin + (b.yMax - b.yMin) * TANK.fillRatio;
+    this.vaporization.setSurfaceY(this.surfaceY);
   }
 
   _initRendering() {
@@ -236,6 +247,10 @@ export class WaterLabSimulation {
       this.canvas.setPointerCapture(e.pointerId);
       this._updatePointer(e);
       this._handleInteraction(true);
+      this.audio.init().then(() => {
+        this.audio.resume();
+        this.audio.playSizzle(this.heatIntensity * 0.6);
+      });
       if (this.device.mobile && navigator.vibrate) navigator.vibrate(8);
     };
 
@@ -282,6 +297,13 @@ export class WaterLabSimulation {
       this.heatIntensity = parseFloat(e.target.value);
     });
 
+    this.canvas.addEventListener("wheel", (e) => {
+      if (this.device.mobile) return;
+      this.heatIntensity = Math.max(0.3, Math.min(3, this.heatIntensity - e.deltaY * 0.002));
+      const slider = document.getElementById("heat-slider");
+      if (slider) slider.value = this.heatIntensity.toFixed(2);
+    }, { passive: true });
+
     document.getElementById("reset-btn")?.addEventListener("click", () => this.resetTank());
 
     const onResize = () => this._resize();
@@ -304,20 +326,43 @@ export class WaterLabSimulation {
     const b = tankBounds(TANK);
     const s = this.simScale;
 
-    // Ray vs tank top plane at fill height
-    const planeY = (b.yMin + (b.yMax - b.yMin) * 0.72);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY * s);
+    const meshHits = this.raycaster.intersectObject(this.waterRenderer.mesh, false);
+    if (meshHits.length > 0) {
+      const p = meshHits[0].point;
+      return {
+        x: p.x / s,
+        y: p.y / s,
+        z: p.z / s,
+        underwater: p.y / s < this.surfaceY - 0.002,
+      };
+    }
+
+    const box = new THREE.Box3(
+      new THREE.Vector3(b.xMin * s, b.yMin * s, b.zMin * s),
+      new THREE.Vector3(b.xMax * s, b.yMax * s, b.zMax * s)
+    );
     const hit = new THREE.Vector3();
-    if (this.raycaster.ray.intersectPlane(plane, hit)) {
+    if (this.raycaster.ray.intersectBox(box, hit)) {
       return {
         x: hit.x / s,
         y: hit.y / s,
         z: hit.z / s,
-        underwater: hit.y / s < planeY,
+        underwater: hit.y / s < this.surfaceY,
       };
     }
 
-    // Fallback: center of tank
+    const planeY = this.surfaceY;
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY * s);
+    const planeHit = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(plane, planeHit)) {
+      return {
+        x: planeHit.x / s,
+        y: planeHit.y / s,
+        z: planeHit.z / s,
+        underwater: false,
+      };
+    }
+
     return {
       x: (b.xMin + b.xMax) * 0.5,
       y: planeY,
@@ -352,16 +397,28 @@ export class WaterLabSimulation {
   resetTank() {
     this.water.reset();
     this.smoke.reset();
+    this.bubbles.reset();
     this.vaporization.activeSources.length = 0;
     fillTank(this.water);
   }
 
   _physicsStep(dt) {
     this.water.step(dt);
-    const vapor = this.vaporization.step(this.water, this.smoke, dt, this.heatIntensity);
+    const vapor = this.vaporization.step(this.water, this.smoke, dt, this.heatIntensity, this.bubbles);
     if (vapor.foamEvents?.length) {
       this.waterRenderer.spawnFoam(vapor.foamEvents, this.simScale);
     }
+
+    const bubbleResult = this.bubbles.step(dt, this.surfaceY);
+    for (const pop of bubbleResult.pops) {
+      this.smoke.inject(pop.x, pop.y + 0.004, pop.z, 0.0015 * pop.intensity, 80, {
+        vy: 2 + Math.random(),
+        temp: 95,
+        radius: pop.r * 6,
+      });
+      this.water.applyStirImpulse(pop.x, pop.y, pop.z, 0, 0.6, 0, pop.r * 5, pop.intensity * 2);
+    }
+
     this.smoke.step(dt);
   }
 
@@ -409,6 +466,9 @@ export class WaterLabSimulation {
     for (let i = 0; i < this.smoke.density.length; i++) smokeAmt += this.smoke.density[i];
     const steam = document.getElementById("stat-steam");
     if (steam) steam.textContent = `Steam: ${(smokeAmt * 100).toFixed(0)}%`;
+
+    const bub = document.getElementById("stat-bubbles");
+    if (bub) bub.textContent = `Bubbles: ${this.bubbles.bubbles.length}`;
   }
 
   update() {
@@ -423,6 +483,7 @@ export class WaterLabSimulation {
     }
 
     this.waterRenderer.updateFoam(dt, this.simScale);
+    this.waterRenderer.updateBubbles(this.bubbles, this.simScale);
 
     if (this.frame % this.quality.meshInterval === 0) {
       this._updateMesh();
@@ -440,6 +501,8 @@ export class WaterLabSimulation {
     this.waterRenderer.renderWaterPass(this.renderer, this.scene, this.camera, this.smokeRenderer.mesh);
     this.renderer.render(this.scene, this.camera);
 
+    this.audio.setVaporizationRate(this.vaporization.lastVaporRate);
+    this.audio.update(dt);
     this._updateHUD(dt);
   }
 

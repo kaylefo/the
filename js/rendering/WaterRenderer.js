@@ -25,6 +25,9 @@ const waterFragmentShader = /* glsl */ `
   uniform vec3 uWaterColor;
   uniform float uTime;
   uniform float uQuality;
+  uniform float uSSRStrength;
+  uniform float uCameraNear;
+  uniform float uCameraFar;
   uniform mat4 uProjectionMatrixInverse;
   uniform mat4 uViewMatrixInverse;
 
@@ -46,6 +49,28 @@ const waterFragmentShader = /* glsl */ `
     float c = hash(i + vec2(0.0, 1.0));
     float d = hash(i + vec2(1.0, 1.0));
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+
+  vec3 traceSSR(vec3 wp, vec3 n, vec3 v, vec2 baseUV) {
+    if (uSSRStrength < 0.01) return vec3(-1.0);
+    vec3 rd = reflect(-v, n);
+    vec3 p = wp;
+    float stride = 0.012;
+    float maxDist = 0.35;
+
+    for (int i = 0; i < 32; i++) {
+      p += rd * stride;
+      if (length(p - wp) > maxDist) break;
+      vec4 clip = projectionMatrix * viewMatrix * vec4(p, 1.0);
+      vec3 proj = clip.xyz / clip.w;
+      vec2 uv = proj.xy * 0.5 + 0.5;
+      if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+      float sceneZ = texture2D(uSceneDepth, uv).r;
+      if (proj.z > sceneZ + 0.0008) {
+        return texture2D(uSceneColor, uv).rgb;
+      }
+    }
+    return vec3(-1.0);
   }
 
   void main() {
@@ -81,7 +106,9 @@ const waterFragmentShader = /* glsl */ `
     float caustic = noise(vWorldPos.xz * 24.0 + uTime * 0.4) * max(0.0, -n.y) * 0.25;
 
     vec3 skyReflect = mix(vec3(0.15, 0.2, 0.28), vec3(0.85, 0.9, 0.95), pow(max(dot(vReflectDir, vec3(0, 1, 0)), 0.0), 4.0));
-    vec3 color = mix(baseColor, skyReflect, fresnel * 0.55);
+    vec3 ssr = traceSSR(vWorldPos, n, v, screenUV);
+    vec3 reflectColor = ssr.x >= 0.0 ? ssr : skyReflect;
+    vec3 color = mix(baseColor, reflectColor, fresnel * (0.35 + uSSRStrength * 0.45));
     color += uLightColor * spec;
     color += vec3(0.6, 0.75, 0.9) * caustic;
 
@@ -99,11 +126,12 @@ export class WaterRenderer {
     this._posBuffer = null;
     this._nrmBuffer = null;
     this.foamParticles = [];
+    this.bubbleParticles = [];
 
     this._initRenderTargets();
     this._initMaterial();
     this._initFoam(quality.foamMax ?? 600);
-    this._initGlassTank();
+    this._initBubbles(quality.bubbleMax ?? 300);
   }
 
   _initRenderTargets() {
@@ -118,11 +146,9 @@ export class WaterRenderer {
   }
 
   resize(w, h) {
-    this.sceneRT.setSize(w, h);
-    if (this.sceneRT.depthTexture) {
-      this.sceneRT.depthTexture.image.width = w;
-      this.sceneRT.depthTexture.image.height = h;
-    }
+    const rw = w || this.renderer.domElement.width || 512;
+    const rh = h || this.renderer.domElement.height || 512;
+    this.sceneRT.setSize(rw, rh);
   }
 
   _initMaterial() {
@@ -138,6 +164,9 @@ export class WaterRenderer {
         uWaterColor: { value: new THREE.Vector3(0.05, 0.35, 0.55) },
         uTime: { value: 0 },
         uQuality: { value: 1 },
+        uSSRStrength: { value: 1 },
+        uCameraNear: { value: 0.01 },
+        uCameraFar: { value: 30 },
         uProjectionMatrixInverse: { value: new THREE.Matrix4() },
         uViewMatrixInverse: { value: new THREE.Matrix4() },
       },
@@ -173,6 +202,28 @@ export class WaterRenderer {
     this.scene.add(this.foamPoints);
   }
 
+  _initBubbles(maxBubbles) {
+    const geo = new THREE.BufferGeometry();
+    this.bubblePositions = new Float32Array(maxBubbles * 3);
+    this.bubbleSizes = new Float32Array(maxBubbles);
+    geo.setAttribute("position", new THREE.BufferAttribute(this.bubblePositions, 3));
+    geo.setAttribute("size", new THREE.BufferAttribute(this.bubbleSizes, 1));
+    this.bubblePoints = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({
+        color: 0xd0eeff,
+        size: 0.006,
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+        sizeAttenuation: true,
+      })
+    );
+    this.bubblePoints.renderOrder = 3;
+    this.bubbleMax = maxBubbles;
+    this.scene.add(this.bubblePoints);
+  }
+
   _initGlassTank() {
     // Placeholder — tank mesh added by simulation
   }
@@ -180,6 +231,12 @@ export class WaterRenderer {
   applyQuality(quality) {
     this.quality = quality;
     this.material.uniforms.uQuality.value = quality.waterGridSize >= 36 ? 1 : quality.waterGridSize >= 28 ? 0.7 : 0.4;
+    this.material.uniforms.uSSRStrength.value = quality.waterGridSize >= 32 ? 1 : quality.waterGridSize >= 28 ? 0.5 : 0;
+  }
+
+  setCameraParams(near, far) {
+    this.material.uniforms.uCameraNear.value = near;
+    this.material.uniforms.uCameraFar.value = far;
   }
 
   setLightDir(dir) {
@@ -251,6 +308,21 @@ export class WaterRenderer {
     this.foamPoints.geometry.setDrawRange(0, count);
   }
 
+  updateBubbles(bubbleSystem, scale) {
+    const bubbles = bubbleSystem.bubbles;
+    const count = Math.min(bubbles.length, this.bubbleMax);
+    for (let i = 0; i < count; i++) {
+      const b = bubbles[i];
+      this.bubblePositions[i * 3] = b.x * scale;
+      this.bubblePositions[i * 3 + 1] = b.y * scale;
+      this.bubblePositions[i * 3 + 2] = b.z * scale;
+      this.bubbleSizes[i] = b.r * scale * 800;
+    }
+    this.bubblePoints.geometry.attributes.position.needsUpdate = true;
+    this.bubblePoints.geometry.setDrawRange(0, count);
+    this.bubblePoints.material.size = 0.004 + scale * 0.0003;
+  }
+
   /** Render opaque scene to RT, then water on top. */
   renderWaterPass(mainRenderer, scene, camera, smokeMesh) {
     const w = mainRenderer.domElement.width;
@@ -258,12 +330,12 @@ export class WaterRenderer {
     this.material.uniforms.uResolution.value.set(w, h);
     this.material.uniforms.uProjectionMatrixInverse.value.copy(camera.projectionMatrixInverse);
     this.material.uniforms.uViewMatrixInverse.value.copy(camera.matrixWorld);
+    this.setCameraParams(camera.near, camera.far);
 
-    // Pass 1: scene without water/smoke
-    const prevVisible = { water: this.mesh.visible, smoke: smokeMesh?.visible, foam: this.foamPoints.visible };
     this.mesh.visible = false;
     if (smokeMesh) smokeMesh.visible = false;
     this.foamPoints.visible = false;
+    this.bubblePoints.visible = false;
 
     mainRenderer.setRenderTarget(this.sceneRT);
     mainRenderer.clear();
@@ -273,6 +345,7 @@ export class WaterRenderer {
     this.mesh.visible = true;
     if (smokeMesh) smokeMesh.visible = true;
     this.foamPoints.visible = true;
+    this.bubblePoints.visible = true;
 
     this.material.uniforms.uSceneColor.value = this.sceneRT.texture;
     this.material.uniforms.uSceneDepth.value = this.sceneRT.depthTexture;
