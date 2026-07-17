@@ -3,7 +3,7 @@ import { LoadingManager } from "./platform/LoadingManager.js";
 import { LoadingUI, publishLoadReport } from "./ui/LoadingUI.js";
 import { createWaterSimulation, WATER_LOAD_STAGES } from "./WaterLabSimulation.js";
 
-const LOAD_TIMEOUT_MS = 90000;
+const LOAD_TIMEOUT_MS = 120000;
 
 function installGlobalErrorHandlers(loadingUI, loader) {
   window.addEventListener("error", (e) => {

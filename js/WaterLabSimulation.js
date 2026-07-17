@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { WaterFLIPSolver } from "./physics/fluid/WaterFLIPSolver.js";
 import { VaporizationCoupler } from "./physics/fluid/VaporizationCoupler.js";
 import { StableFluidsSmoke, smokeGridFromTank } from "./physics/smoke/StableFluidsSmoke.js";
-import { TANK, fillTank, gridFromTank, tankBounds } from "./physics/WaterTank.js";
+import { TANK, fillTank, fillTankAsync, gridFromTank, tankBounds } from "./physics/WaterTank.js";
 import { marchingCubes } from "./rendering/MarchingCubes.js";
 import { WaterRenderer } from "./rendering/WaterRenderer.js";
 import { SmokeVolumeRenderer } from "./rendering/SmokeVolumeRenderer.js";
@@ -515,6 +515,70 @@ export class WaterLabSimulation {
     fillTank(this.water);
   }
 
+  async resetTankAsync(onProgress) {
+    this.water.reset();
+    this.smoke.reset();
+    this.bubbles.reset();
+    this.condensation?.reset();
+    this.vaporization.activeSources.length = 0;
+    this.water.temperature.reset();
+    await fillTankAsync(this.water, TANK, TANK.fillRatio, {
+      yieldEvery: this.device?.mobile ? 250 : 500,
+      onProgress,
+    });
+  }
+
+  _updateMesh() {
+    this.water.sampleDensity(this.water.densityField);
+    this._buildSurfaceMesh();
+    const g = this.gridInfo;
+    this.caustics.updateFromPhi(
+      this.water.phi,
+      g.nx, g.ny, g.nz,
+      g.origin, g.dx, TANK
+    );
+    this.smokeRenderer.updateFromSmoke(this.smoke);
+  }
+
+  async _updateMeshBoot(onProgress) {
+    onProgress?.(0.15);
+    this.water.sampleDensity(this.water.densityField, { smooth: false });
+    await this._yield();
+    onProgress?.(0.55);
+    this._buildSurfaceMesh();
+    await this._yield();
+    onProgress?.(0.85);
+    const g = this.gridInfo;
+    this.caustics.updateFromPhi(
+      this.water.phi,
+      g.nx, g.ny, g.nz,
+      g.origin, g.dx, TANK
+    );
+    this.smokeRenderer.updateFromSmoke(this.smoke);
+    onProgress?.(1);
+    await this._yield();
+  }
+
+  _buildSurfaceMesh() {
+    let maxD = 0;
+    for (let i = 0; i < this.water.densityField.length; i++) {
+      if (this.water.densityField[i] > maxD) maxD = this.water.densityField[i];
+    }
+    const isovalue = maxD * 0.22;
+    const g = this.gridInfo;
+
+    if (isovalue > 0) {
+      const mc = marchingCubes(
+        this.water.densityField,
+        g.nx, g.ny, g.nz,
+        g.origin, g.dx, isovalue
+      );
+      if (mc.triangleCount > 0) {
+        this.waterRenderer.updateMesh(mc);
+      }
+    }
+  }
+
   _physicsStep(dt) {
     this.water.step(dt);
 
@@ -570,34 +634,6 @@ export class WaterLabSimulation {
 
     this.smoke.step(stepDt);
     this.smokeSolverMode = gpu?.ready && this.quality.useWebGPU ? "WebGPU*" : "CPU";
-  }
-
-  _updateMesh() {
-    this.water.sampleDensity(this.water.densityField);
-    let maxD = 0;
-    for (let i = 0; i < this.water.densityField.length; i++) {
-      if (this.water.densityField[i] > maxD) maxD = this.water.densityField[i];
-    }
-    const isovalue = maxD * 0.22;
-    const g = this.gridInfo;
-
-    if (isovalue > 0) {
-      const mc = marchingCubes(
-        this.water.densityField,
-        g.nx, g.ny, g.nz,
-        g.origin, g.dx, isovalue
-      );
-      if (mc.triangleCount > 0) {
-        this.waterRenderer.updateMesh(mc);
-      }
-    }
-
-    this.caustics.updateFromPhi(
-      this.water.phi,
-      g.nx, g.ny, g.nz,
-      g.origin, g.dx, TANK
-    );
-    this.smokeRenderer.updateFromSmoke(this.smoke);
   }
 
   _updateHUD(fpsDt) {
@@ -826,17 +862,17 @@ export async function createWaterSimulation(canvas, loader) {
   });
 
   await loader.runStage("fill_water", async () => {
-    sim.resetTank();
+    await sim.resetTankAsync((p) => loader.setSubProgress(p));
     await sim._yield();
   });
 
   await loader.runStage("surface_mesh", async () => {
-    sim._updateMesh();
-    await sim._yield();
+    await sim._updateMeshBoot((p) => loader.setSubProgress(p));
   });
 
   await loader.runStage("finalize", async () => {
-    sim.postProcess.render();
+    sim._resize();
+    sim.renderer.render(sim.scene, sim.camera);
     await sim._yield();
   });
 

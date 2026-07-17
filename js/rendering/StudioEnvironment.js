@@ -14,14 +14,22 @@ export async function loadStudioEnvironment(renderer, scene) {
     typeof window !== "undefined" &&
     (window.__E2E__ || new URLSearchParams(window.location.search).has("e2e"));
 
-  if (e2e) {
+  const mobile =
+    typeof window !== "undefined" &&
+    (window.matchMedia("(max-width: 768px)").matches ||
+      (navigator.maxTouchPoints > 0 && window.innerWidth < 900));
+
+  if (e2e || mobile) {
     return _proceduralStudio(pmrem, scene);
   }
 
   try {
     const { RGBELoader } = await import("three/addons/loaders/RGBELoader.js");
     const loader = new RGBELoader();
-    const hdr = await loader.loadAsync(HDR_URL);
+    const hdr = await Promise.race([
+      loader.loadAsync(HDR_URL),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("HDR timeout")), 8000)),
+    ]);
     hdr.mapping = THREE.EquirectangularReflectionMapping;
     const envMap = pmrem.fromEquirectangular(hdr).texture;
     hdr.dispose();

@@ -346,31 +346,44 @@ export class WaterDeviceProfile extends DeviceProfile {
 
   getSettings() {
     const base = { ...WATER_QUALITY_TIERS[this.tier] };
-    if (!this._isE2E()) return base;
-    return {
-      ...base,
-      label: "E2E",
-      waterGridSize: 16,
-      flipMaxMarkers: 600,
-      flipIterations: 8,
-      smokeRes: 20,
-      smokeSteps: 12,
-      smokeInterval: 3,
-      maxPhysicsSteps: 1,
-      physicsSubsteps: 1,
-      meshInterval: 4,
-      shadowMapSize: 0,
-      maxPixelRatio: 1,
-      antialias: false,
-      shadows: false,
-      bloom: false,
-      causticRes: 32,
-      heatShimmer: false,
-      filmGrain: false,
-      godRays: false,
-      condensationRes: 16,
-      useWebGPU: false,
-    };
+    if (this._isE2E()) {
+      return {
+        ...base,
+        label: "E2E",
+        waterGridSize: 16,
+        flipMaxMarkers: 600,
+        flipIterations: 8,
+        smokeRes: 20,
+        smokeSteps: 12,
+        smokeInterval: 3,
+        maxPhysicsSteps: 1,
+        physicsSubsteps: 1,
+        meshInterval: 4,
+        shadowMapSize: 0,
+        maxPixelRatio: 1,
+        antialias: false,
+        shadows: false,
+        bloom: false,
+        causticRes: 32,
+        heatShimmer: false,
+        filmGrain: false,
+        godRays: false,
+        condensationRes: 16,
+        useWebGPU: false,
+      };
+    }
+    if (this.mobile) {
+      return {
+        ...base,
+        waterGridSize: Math.min(base.waterGridSize, 28),
+        flipMaxMarkers: Math.min(base.flipMaxMarkers, 8000),
+        bloom: this.tier === "ultra" ? false : base.bloom,
+        godRays: false,
+        filmGrain: false,
+        heatShimmer: base.heatShimmer && this.tier !== "ultra",
+      };
+    }
+    return base;
   }
 
   summary() {

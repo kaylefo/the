@@ -1004,7 +1004,8 @@ export class WaterFLIPSolver {
     }
   }
 
-  sampleDensity(outField) {
+  sampleDensity(outField, opts = {}) {
+    const smooth = opts.smooth !== false;
     outField.fill(0);
     const g = this.grid;
     const invR = 1 / (this.dx * 1.2);
@@ -1012,9 +1013,9 @@ export class WaterFLIPSolver {
 
     for (const m of this.markers) {
       const { base } = g.nodeFromWorld(m.x, m.y, m.z);
-      for (let di = -1; di <= 2; di++) {
-        for (let dj = -1; dj <= 2; dj++) {
-          for (let dk = -1; dk <= 2; dk++) {
+      for (let di = -1; di <= 1; di++) {
+        for (let dj = -1; dj <= 1; dj++) {
+          for (let dk = -1; dk <= 1; dk++) {
             const i = base[0] + di, j = base[1] + dj, k = base[2] + dk;
             if (i < 0 || j < 0 || k < 0 || i >= g.nx || j >= g.ny || k >= g.nz) continue;
             const pos = g.worldPos(i, j, k);
@@ -1026,6 +1027,8 @@ export class WaterFLIPSolver {
         }
       }
     }
+
+    if (!smooth) return;
 
     // Light smoothing pass for cleaner marching-cubes isosurface
     const scratch = this.pressureScratch;
