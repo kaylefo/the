@@ -11,25 +11,28 @@
 
   <div id="hud">
     <h1>Tomato Squash Lab</h1>
-    <p class="subtitle">Soft-body physics · rupture · juice dynamics</p>
+    <p class="subtitle">MPM neo-Hookean · phase-field fracture · FLIP Navier-Stokes</p>
     <div class="stats">
-      <span id="stat-strain">Strain: 0%</span>
+      <span id="stat-strain">Damage φ: 0%</span>
       <span id="stat-juice">Juice: 0 ml</span>
+      <span id="stat-particles">MPM: — · FLIP: —</span>
+      <span id="stat-energy">Energy: — J</span>
       <span id="stat-fps">FPS: —</span>
     </div>
+    <canvas id="force-chart" width="280" height="90"></canvas>
     <div class="controls">
-      <p><kbd>Click + drag</kbd> squash the tomato</p>
-      <p><kbd>Scroll</kbd> adjust squeeze force</p>
+      <p><kbd>Click + drag</kbd> move press plate down</p>
+      <p><kbd>Scroll</kbd> adjust squeeze rate</p>
       <p><kbd>R</kbd> reset · <kbd>Space</kbd> drop from height</p>
     </div>
     <div class="force-meter">
-      <label for="force-slider">Squeeze force</label>
-      <input id="force-slider" type="range" min="0.3" max="3" step="0.05" value="1.2" />
+      <label for="force-slider">Squeeze rate</label>
+      <input id="force-slider" type="range" min="0.5" max="4" step="0.05" value="1.5" />
     </div>
     <button id="reset-btn" type="button">Reset Tomato</button>
   </div>
 
-  <div id="loading">Simulating pulp viscosity…</div>
+  <div id="loading">Initializing MPM grid (32³) · neo-Hookean constitutive model…</div>
 
   <script type="importmap">
   {
