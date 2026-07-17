@@ -1,5 +1,5 @@
-import { Grid3D } from "./mpm/Grid3D.js";
-import { clamp } from "./math.js";
+import { Grid3D } from "../mpm/Grid3D.js";
+import { clamp } from "../math.js";
 
 /**
  * FLIP fluid solver (Marker-and-Cell) for released tomato juice.

@@ -10,6 +10,10 @@ import { MobileHUD } from "./ui/MobileHUD.js";
 
 const GROUND_Y = 0;
 const SCALE = 8;
+// Plate descent speed (sim m/s) per unit of the squeeze-rate slider.
+const PLATE_SPEED = 0.5;
+// World-space height the camera aims at (the tomato centre sits near here).
+const LOOK_Y = 0.3;
 
 export class TomatoSimulation {
   constructor(canvas, options = {}) {
@@ -31,6 +35,10 @@ export class TomatoSimulation {
     this.densityField = null;
     this.damageField = { data: null, origin: null, dx: 0 };
 
+    // Physics workload (grid resolution, particle count, substeps) is chosen
+    // once from the initial device tier and held constant for the session.
+    this.physicsSubsteps = this.quality.physicsSubsteps ?? 1;
+
     this.adaptive = new AdaptiveQuality(this.device, (q) => this.applyQuality(q));
     window.__tomatoSim = this;
   }
@@ -40,9 +48,10 @@ export class TomatoSimulation {
   }
 
   applyQuality(settings) {
+    // Runtime adaptation only tunes rendering cost (pixel ratio, shadows, mesh
+    // cadence, fluid point size). The physics grid and particle set are fixed
+    // for the session so a downgrade never rebuilds/resets the tomato mid-press.
     this.quality = settings;
-    this.fixedDt = 1 / settings.fixedFps;
-    this._rebuildPhysics(settings);
     this.tomatoRenderer?.applyQuality(settings);
     this._applyRendererQuality();
     this.hud?.setQuality(this.device.summary());
@@ -89,12 +98,12 @@ export class TomatoSimulation {
   }
 
   _updateCameraForViewport(w, h) {
-    const aspect = w / h;
     const isPortrait = h > w;
-    const dist = isPortrait ? 0.72 : 0.65;
-    const height = isPortrait ? 0.42 : 0.45;
-    this.camera.position.set(dist * 0.85, height, dist);
-    this.camera.lookAt(0, 0.32 * SCALE, 0);
+    const dist = isPortrait ? 1.35 : 1.1;
+    const height = isPortrait ? 0.62 : 0.66;
+    this._camBase = { x: dist * 0.6, y: height, z: dist };
+    this.camera.position.set(this._camBase.x, this._camBase.y, this._camBase.z);
+    this.camera.lookAt(0, LOOK_Y, 0);
   }
 
   _initScene() {
@@ -267,7 +276,7 @@ export class TomatoSimulation {
       ...this._particleOptions,
     });
     const bounds = getTomatoBounds(this.mpm);
-    this.mpm.pressRestY = bounds.maxY + 0.06;
+    this.mpm.pressRestY = bounds.maxY + 0.015;
     this.mpm.pressPlateY = this.mpm.pressRestY;
     this._updatePlateVisual();
   }
@@ -277,24 +286,6 @@ export class TomatoSimulation {
       p.x[1] += 0.08;
       p.v[1] = -0.5;
     }
-  }
-
-  _updatePressFromPointer() {
-    this.raycaster.setFromCamera(this.pointer, this.camera);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.3 * SCALE);
-    const hit = new THREE.Vector3();
-    if (!this.raycaster.ray.intersectPlane(plane, hit)) return;
-
-    if (this.isDragging) {
-      const simY = hit.y / SCALE;
-      const bounds = getTomatoBounds(this.mpm);
-      const minY = bounds.maxY + 0.005;
-      const maxY = this.mpm.pressRestY;
-      this.mpm.setPressPlate(Math.max(minY, Math.min(maxY, simY)), true);
-    } else {
-      this.mpm.setPressPlate(this.mpm.pressPlateY, false);
-    }
-    this._updatePlateVisual();
   }
 
   _updatePlateVisual() {
@@ -308,10 +299,19 @@ export class TomatoSimulation {
   }
 
   _physicsStep(dt) {
-    if (this.isDragging) {
+    // Plate lower bound: just above the cutting board so the tomato can be
+    // flattened but the plate never punches through the ground.
+    const minPlateY = GROUND_Y + 0.006;
+    if (this.isDragging && this.mpm.pressPlateY > minPlateY) {
       const rate = this.device.mobile ? this.squeezeForce * 1.4 : this.squeezeForce;
-      this.mpm.setPressPlate(this.mpm.pressPlateY - rate * dt * 0.003, true);
+      const descent = rate * PLATE_SPEED;
+      const newY = Math.max(minPlateY, this.mpm.pressPlateY - descent * dt);
+      this.mpm.setPressPlate(newY, true, -descent);
       this._updatePlateVisual();
+    } else {
+      // Hold position as a static obstacle so the deformation stays visible.
+      const engaged = this.mpm.pressPlateY < this.mpm.pressRestY - 1e-6;
+      this.mpm.setPressPlate(this.mpm.pressPlateY, engaged, 0);
     }
 
     const ruptures = this.mpm.step(dt);
@@ -327,11 +327,22 @@ export class TomatoSimulation {
 
   _updateMesh() {
     this.mpm.sampleDensity(this.densityField, 1.2);
-    const mc = marchingCubes(
-      this.densityField,
-      this.mpm.nx, this.mpm.ny, this.mpm.nz,
-      this.mpmOrigin, this.mpmDx, 0.8
-    );
+
+    // The absolute density scale depends on tier/particle mass, so derive the
+    // isosurface threshold from the field itself (fraction of peak density).
+    let maxDensity = 0;
+    for (let i = 0; i < this.densityField.length; i++) {
+      if (this.densityField[i] > maxDensity) maxDensity = this.densityField[i];
+    }
+    const isovalue = maxDensity * 0.28;
+
+    const mc = isovalue > 0
+      ? marchingCubes(
+          this.densityField,
+          this.mpm.nx, this.mpm.ny, this.mpm.nz,
+          this.mpmOrigin, this.mpmDx, isovalue
+        )
+      : { triangleCount: 0 };
 
     if (mc.triangleCount > 0) {
       this.tomatoRenderer.updateMesh(mc, this.damageField, this.mpm.nx, this.mpm.ny, this.mpm.nz);
@@ -371,23 +382,18 @@ export class TomatoSimulation {
     this.adaptive.recordFrame(dt);
     this.adaptive.update(performance.now());
 
-    this._updatePressFromPointer();
-
-    this.accumulator += dt;
-    let steps = 0;
-    while (this.accumulator >= this.fixedDt && steps < this.quality.maxPhysicsSteps) {
-      this._physicsStep(this.fixedDt);
-      this.accumulator -= this.fixedDt;
-      steps++;
-    }
+    // Advance a fixed number of CFL-stable substeps per rendered frame. The
+    // simulation runs in slow motion (stiff tissue demands tiny substeps), but
+    // it stays stable and deterministic regardless of frame rate.
+    for (let s = 0; s < this.physicsSubsteps; s++) this._physicsStep(this.mpm.maxSubDt);
 
     if (this.frame % this.quality.meshInterval === 0) this._updateMesh();
     this.frame++;
 
-    if (!this.device.mobile) {
-      this.camera.position.x = 0.55 + Math.sin(this.clock.elapsedTime * 0.2) * 0.02;
+    if (!this.device.mobile && this._camBase) {
+      this.camera.position.x = this._camBase.x + Math.sin(this.clock.elapsedTime * 0.2) * 0.03;
     }
-    this.camera.lookAt(0, 0.32 * SCALE, 0);
+    this.camera.lookAt(0, LOOK_Y, 0);
 
     this._updateHUD(dt);
     this.renderer.render(this.scene, this.camera);
@@ -468,7 +474,7 @@ export async function createSimulation(canvas, loader) {
     });
     loader.setSubProgress(0.85);
     const bounds = getTomatoBounds(sim.mpm);
-    sim.mpm.pressRestY = bounds.maxY + 0.06;
+    sim.mpm.pressRestY = bounds.maxY + 0.015;
     sim.mpm.pressPlateY = sim.mpm.pressRestY;
     sim._updatePlateVisual();
     loader.setSubProgress(1);

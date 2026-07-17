@@ -45,24 +45,21 @@ export class Grid3D {
   }
 
   nodeFromWorld(x, y, z) {
-    const fx = (x - this.origin[0]) * this.invDx - 0.5;
-    const fy = (y - this.origin[1]) * this.invDx - 0.5;
-    const fz = (z - this.origin[2]) * this.invDx - 0.5;
+    const ax = (x - this.origin[0]) * this.invDx;
+    const ay = (y - this.origin[1]) * this.invDx;
+    const az = (z - this.origin[2]) * this.invDx;
+    const bx = Math.floor(ax - 0.5);
+    const by = Math.floor(ay - 0.5);
+    const bz = Math.floor(az - 0.5);
+    // frac is the distance (in cells) from the base node to the particle,
+    // in [0.5, 1.5), as required by the quadratic B-spline kernel below.
     return {
-      base: [
-        Math.floor(fx),
-        Math.floor(fy),
-        Math.floor(fz),
-      ],
-      frac: [
-        fx - Math.floor(fx),
-        fy - Math.floor(fy),
-        fz - Math.floor(fz),
-      ],
+      base: [bx, by, bz],
+      frac: [ax - bx, ay - by, az - bz],
     };
   }
 
-  /** Quadratic B-spline weights and derivatives (3 per axis). */
+  /** Quadratic B-spline weights and derivatives (3 per axis). f = distance to base node ∈ [0.5, 1.5). */
   static bsplineWeights(f, outW, outD) {
     outW[0] = 0.5 * (1.5 - f) ** 2;
     outW[1] = 0.75 - (f - 1) ** 2;
