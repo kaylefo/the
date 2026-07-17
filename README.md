@@ -37,7 +37,19 @@ python3 -m http.server 8080
 # Water Physics Lab: http://localhost:8080/water.html
 ```
 
-## Controls
+## Water Physics Lab
+
+Open **`water.html`** for interactive FLIP water in a glass tank with **click-to-vaporize** and **volumetric steam**.
+
+| Input | Action |
+|-------|--------|
+| Click / tap | Vaporize water into steam |
+| Hold + drag | Sustained boil & stir |
+| Heat slider | Vaporization intensity |
+| R | Reset tank |
+| Space | Shock boil pulse |
+
+## Controls (Tomato)
 
 | Input | Action |
 |-------|--------|
