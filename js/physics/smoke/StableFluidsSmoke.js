@@ -89,6 +89,12 @@ export class StableFluidsSmoke {
 
   step(dt) {
     dt = Math.min(dt, 0.016);
+    let maxD = 0;
+    for (let i = 0; i < this.count; i++) {
+      if (this.density[i] > maxD) maxD = this.density[i];
+    }
+    if (maxD < 1e-6) return;
+
     this._addBuoyancy(dt);
     this._advect(this.density, this.densityTmp, dt);
     this.density.set(this.densityTmp);

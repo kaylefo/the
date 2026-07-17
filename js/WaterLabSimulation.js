@@ -10,6 +10,9 @@ import { WaterDeviceProfile, AdaptiveQuality } from "./platform/DeviceProfile.js
 import { MobileHUD } from "./ui/MobileHUD.js";
 import { WaterLabAudio } from "./audio/WaterLabAudio.js";
 import { BubbleSystem } from "./physics/fluid/BubbleSystem.js";
+import { PostProcessPipeline } from "./rendering/PostProcessPipeline.js";
+import { CausticsGenerator } from "./rendering/CausticsGenerator.js";
+import { createTableCausticsMaterial, createFloorCausticsMaterial } from "./rendering/TableCausticsMaterial.js";
 
 const SCALE = 8;
 const LOOK_Y = 0.35;
@@ -50,6 +53,7 @@ export class WaterLabSimulation {
     this.quality = settings;
     this.waterRenderer?.applyQuality(settings);
     this.smokeRenderer?.applyQuality(settings);
+    this.postProcess?.applyQuality(settings);
     this._applyRendererQuality();
     this.hud?.setQuality(this.device.summary());
   }
@@ -94,6 +98,7 @@ export class WaterLabSimulation {
       this.renderer.domElement.width,
       this.renderer.domElement.height
     );
+    this.postProcess?.resize(w, h);
     this._updateCameraForViewport(w, h);
   }
 
@@ -114,22 +119,28 @@ export class WaterLabSimulation {
   }
 
   _initEnvironment() {
+    this.caustics = new CausticsGenerator(this.quality.causticRes ?? 96);
+
+    const floorMat = createFloorCausticsMaterial(this.caustics.texture, TANK, SCALE);
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(3, 3),
-      new THREE.MeshStandardMaterial({ color: 0x1a1816, roughness: 0.85, metalness: 0.05 })
+      floorMat
     );
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.002;
     floor.receiveShadow = true;
     this.scene.add(floor);
+    this.floorMat = floorMat;
 
+    const tableMat = createTableCausticsMaterial(this.caustics.texture, TANK, SCALE);
     const table = new THREE.Mesh(
       new THREE.BoxGeometry(0.55, 0.025, 0.55),
-      new THREE.MeshStandardMaterial({ color: 0x3d2e24, roughness: 0.65 })
+      tableMat
     );
     table.position.y = -0.012;
     table.receiveShadow = true;
     this.scene.add(table);
+    this.tableMat = tableMat;
 
     this._buildGlassTank();
   }
@@ -209,6 +220,8 @@ export class WaterLabSimulation {
       [sg.origin[0] * s, sg.origin[1] * s, sg.origin[2] * s],
       [sg.nx * sg.dx * s, sg.ny * sg.dx * s, sg.nz * sg.dx * s]
     );
+
+    this.postProcess = new PostProcessPipeline(this.renderer, this.scene, this.camera, this.quality);
   }
 
   _initLights() {
@@ -419,7 +432,14 @@ export class WaterLabSimulation {
       this.water.applyStirImpulse(pop.x, pop.y, pop.z, 0, 0.6, 0, pop.r * 5, pop.intensity * 2);
     }
 
-    this.smoke.step(dt);
+    this._stepSmoke(dt);
+  }
+
+  _stepSmoke(dt) {
+    const interval = this.quality.smokeInterval ?? 1;
+    this._smokeTick = (this._smokeTick ?? 0) + 1;
+    if (this._smokeTick % interval !== 0) return;
+    this.smoke.step(dt * interval);
   }
 
   _updateMesh() {
@@ -442,6 +462,11 @@ export class WaterLabSimulation {
       }
     }
 
+    this.caustics.updateFromDensity(
+      this.water.densityField,
+      g.nx, g.ny, g.nz,
+      g.origin, g.dx, TANK
+    );
     this.smokeRenderer.updateFromSmoke(this.smoke);
   }
 
@@ -487,8 +512,16 @@ export class WaterLabSimulation {
 
     if (this.frame % this.quality.meshInterval === 0) {
       this._updateMesh();
+    } else if (this.frame % (this.quality.smokeUploadInterval ?? 1) === 0) {
+      this.smokeRenderer.updateFromSmoke(this.smoke);
     }
     this.frame++;
+
+    const elapsed = this.clock.elapsedTime;
+    this.tableMat?.userData.causticUniforms?.uTime &&
+      (this.tableMat.userData.causticUniforms.uTime.value = elapsed);
+    this.floorMat?.userData.causticUniforms?.uTime &&
+      (this.floorMat.userData.causticUniforms.uTime.value = elapsed);
 
     if (this._camBase) {
       this.camera.position.x = this._camBase.x + Math.sin(this.clock.elapsedTime * 0.15) * 0.02;
@@ -499,7 +532,7 @@ export class WaterLabSimulation {
     this.smokeRenderer.setCameraPos(this.camera.position);
 
     this.waterRenderer.renderWaterPass(this.renderer, this.scene, this.camera, this.smokeRenderer.mesh);
-    this.renderer.render(this.scene, this.camera);
+    this.postProcess.render();
 
     this.audio.setVaporizationRate(this.vaporization.lastVaporRate);
     this.audio.update(dt);
@@ -595,7 +628,7 @@ export async function createWaterSimulation(canvas, loader) {
   });
 
   await loader.runStage("finalize", async () => {
-    sim.renderer.render(sim.scene, sim.camera);
+    sim.postProcess.render();
     await sim._yield();
   });
 
