@@ -33,7 +33,8 @@ TomatoAnatomy → MPMSolver (P2G → grid → G2P)
 
 ```bash
 python3 -m http.server 8080
-# open http://localhost:8080
+# Tomato demo: http://localhost:8080
+# Water Physics Lab: http://localhost:8080/water.html
 ```
 
 ## Controls
@@ -54,7 +55,13 @@ python3 -m http.server 8080
 - `js/physics/validation/ForceRecorder.js` — F–h curve
 - `js/rendering/MarchingCubes.js` — isosurface extraction
 - `js/rendering/TomatoRenderer.js` — SSS + wetness shaders
-- `js/TomatoSimulation.js` — orchestrator
+- `js/WaterLabSimulation.js` — water lab orchestrator
+- `js/physics/fluid/WaterFLIPSolver.js` — FLIP water with surface tension
+- `js/physics/fluid/VaporizationCoupler.js` — click heat → steam
+- `js/physics/smoke/StableFluidsSmoke.js` — buoyant smoke grid
+- `js/rendering/WaterRenderer.js` — refractive water shader
+- `js/rendering/SmokeVolumeRenderer.js` — volumetric steam raymarch
+- `js/TomatoSimulation.js` — tomato orchestrator
 
 ## Roadmap to 1000/1000
 

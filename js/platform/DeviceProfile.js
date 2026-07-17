@@ -210,6 +210,100 @@ export class DeviceProfile {
   }
 }
 
+export const WATER_QUALITY_TIERS = {
+  ultra: {
+    label: "Ultra",
+    waterGridSize: 36,
+    flipMaxMarkers: 18000,
+    flipIterations: 40,
+    smokeRes: 56,
+    smokeSteps: 64,
+    foamMax: 800,
+    maxPhysicsSteps: 2,
+    physicsSubsteps: 2,
+    fixedFps: 60,
+    meshInterval: 1,
+    shadowMapSize: 2048,
+    maxPixelRatio: 2,
+    antialias: true,
+    shadows: true,
+  },
+  high: {
+    label: "High",
+    waterGridSize: 32,
+    flipMaxMarkers: 12000,
+    flipIterations: 35,
+    smokeRes: 48,
+    smokeSteps: 48,
+    foamMax: 600,
+    maxPhysicsSteps: 2,
+    physicsSubsteps: 2,
+    fixedFps: 60,
+    meshInterval: 1,
+    shadowMapSize: 1024,
+    maxPixelRatio: 2,
+    antialias: true,
+    shadows: true,
+  },
+  medium: {
+    label: "Medium",
+    waterGridSize: 28,
+    flipMaxMarkers: 8000,
+    flipIterations: 25,
+    smokeRes: 40,
+    smokeSteps: 36,
+    foamMax: 400,
+    maxPhysicsSteps: 1,
+    physicsSubsteps: 3,
+    fixedFps: 45,
+    meshInterval: 2,
+    shadowMapSize: 512,
+    maxPixelRatio: 1.5,
+    antialias: false,
+    shadows: false,
+  },
+  low: {
+    label: "Low",
+    waterGridSize: 24,
+    flipMaxMarkers: 5000,
+    flipIterations: 18,
+    smokeRes: 32,
+    smokeSteps: 28,
+    foamMax: 250,
+    maxPhysicsSteps: 1,
+    physicsSubsteps: 4,
+    fixedFps: 40,
+    meshInterval: 3,
+    shadowMapSize: 0,
+    maxPixelRatio: 1,
+    antialias: false,
+    shadows: false,
+  },
+};
+
+export class WaterDeviceProfile extends DeviceProfile {
+  getSettings() {
+    return { ...WATER_QUALITY_TIERS[this.tier] };
+  }
+
+  summary() {
+    const s = this.getSettings();
+    return {
+      tier: this.tier,
+      label: s.label,
+      mobile: this.mobile,
+      ios: this.ios,
+      proMaxClass: this.isProMaxClass,
+      dpr: this.dpr,
+      pixelRatio: this.getPixelRatio(s),
+      grid: s.waterGridSize,
+      memoryGb: this.memoryGb,
+      cores: this.cores,
+      webgl2: this.webgl2,
+    };
+  }
+}
+
 export class AdaptiveQuality {
   constructor(device, onTierChange) {
     this.device = device;

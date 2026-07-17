@@ -6,11 +6,18 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#0e0c10" />
-  <meta name="description" content="Hyper-realistic tomato squashing physics — MPM, fracture, FLIP fluid." />
-  <title>Tomato Squash Lab</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%85%3C/text%3E%3C/svg%3E" />
+  <meta name="theme-color" content="#0a0c10" />
+  <meta name="description" content="Interactive water physics lab — click to vaporize, hyper-real steam, FLIP fluid simulation." />
+  <title>Water Physics Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%A7%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="css/style.css" />
+  <style>
+    #hud { border-color: rgba(80, 180, 255, 0.22); }
+    #hud-toggle { border-color: rgba(80, 180, 255, 0.3); color: #64b5f6; }
+    .quality-badge { background: rgba(30, 80, 140, 0.35); color: #90caf9; }
+    #begin-btn { background: linear-gradient(135deg, #1565c0, #0288d1); }
+    .load-bar-fill { background: linear-gradient(90deg, #1565c0, #29b6f6); }
+  </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
@@ -20,49 +27,45 @@
   <div id="hud">
     <div class="hud-header">
       <div>
-        <h1>Tomato Squash Lab</h1>
-        <p class="subtitle">MPM · fracture · FLIP fluid</p>
+        <h1>Water Physics Lab</h1>
+        <p class="subtitle">FLIP fluid · click vaporize · volumetric steam</p>
       </div>
       <span id="quality-badge" class="quality-badge">—</span>
     </div>
 
     <div class="stats">
-      <span id="stat-strain">Damage φ: 0%</span>
-      <span id="stat-juice">Juice: 0 ml</span>
-      <span id="stat-particles">MPM: — · FLIP: —</span>
-      <span id="stat-energy">Energy: — J</span>
+      <span id="stat-volume">Water: — L</span>
+      <span id="stat-markers">Markers: —</span>
+      <span id="stat-steam">Steam: —</span>
       <span id="stat-fps">FPS: —</span>
     </div>
 
-    <canvas id="force-chart" width="280" height="90"></canvas>
-
     <div id="controls-desktop" class="controls">
-      <p><kbd>Click + drag</kbd> move press plate</p>
-      <p><kbd>Scroll</kbd> adjust squeeze rate</p>
-      <p><kbd>R</kbd> reset · <kbd>Space</kbd> drop</p>
+      <p><kbd>Click</kbd> vaporize water into steam</p>
+      <p><kbd>Hold + drag</kbd> sustained boil &amp; stir</p>
+      <p><kbd>Scroll / slider</kbd> heat intensity</p>
+      <p><kbd>R</kbd> reset · <kbd>Space</kbd> shock boil</p>
     </div>
 
     <div id="controls-mobile" class="controls" hidden>
-      <p><strong>Drag</strong> on the scene to lower the press plate</p>
-      <p>Use the slider below to adjust squeeze speed</p>
+      <p><strong>Tap</strong> to vaporize — <strong>hold &amp; drag</strong> to boil &amp; stir</p>
     </div>
 
     <div class="force-meter">
-      <label for="force-slider">Squeeze rate</label>
-      <input id="force-slider" type="range" min="0.5" max="4" step="0.05" value="1.5" />
+      <label for="heat-slider">Heat intensity</label>
+      <input id="heat-slider" type="range" min="0.3" max="3" step="0.05" value="1.2" />
     </div>
 
     <div class="action-row">
-      <button id="drop-btn" type="button" class="secondary-btn">Drop</button>
+      <a href="index.html" class="secondary-btn" style="text-decoration:none;text-align:center;line-height:2.2">Tomato Lab</a>
       <button id="reset-btn" type="button">Reset</button>
-      <a href="water.html" class="secondary-btn" style="text-decoration:none;text-align:center;line-height:2.2">Water Lab</a>
     </div>
   </div>
 
   <div id="loading">
     <div id="loading-gate" class="loading-card">
-      <h2>Tomato Squash Lab</h2>
-      <p class="gate-sub">Multiphysics MPM simulation · requires WebGL</p>
+      <h2>Water Physics Lab</h2>
+      <p class="gate-sub">Interactive FLIP water · click-to-vaporize · volumetric smoke</p>
       <p class="gate-hint">Loading starts only after you tap — this avoids mobile browser errors.</p>
       <button id="begin-btn" type="button">Tap to Begin</button>
     </div>
@@ -86,14 +89,6 @@
   }
   </script>
 
-  <!--
-    Early, dependency-free begin gate.
-    This classic (non-module) script runs the instant it is parsed, so the
-    "Tap to Begin" button responds immediately — even while the heavy module
-    graph (three.js, simulation) is still downloading, or if it never loads at
-    all. It flips the gate to the progress view for instant feedback and hands
-    control to the module via the __onBegin hook once (and only once) the user taps.
-  -->
   <script>
     (function () {
       window.__beginRequested = false;
@@ -116,12 +111,11 @@
       var btn = document.getElementById("begin-btn");
       if (btn) {
         btn.addEventListener("click", requestBegin);
-        // Some mobile browsers are flaky about synthesizing click; cover touch too.
         btn.addEventListener("touchend", function (e) { e.preventDefault(); requestBegin(); }, { passive: false });
       }
     })();
   </script>
 
-  <script type="module" src="js/main.js?v=5"></script>
+  <script type="module" src="js/water-main.js?v=1"></script>
 </body>
 </html>
