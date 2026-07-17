@@ -41,3 +41,9 @@ export function updateLoadingProgress(text) {
   const el = document.getElementById("loading-text");
   if (el) el.textContent = text;
 }
+
+export function yieldToMain() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+  });
+}

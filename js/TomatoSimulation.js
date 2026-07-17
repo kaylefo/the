@@ -33,9 +33,9 @@ export class TomatoSimulation {
 
     this.adaptive = new AdaptiveQuality(this.device, (q) => this.applyQuality(q));
 
-    this._initRenderer();
+    // Scene must exist before renderer (camera required for resize)
     this._initScene();
-    this._initPhysics();
+    this._initRenderer();
     this._initRendering();
     this._initValidation();
     this._initInput();
@@ -49,6 +49,27 @@ export class TomatoSimulation {
     this.fpsTime = 0;
 
     window.__tomatoSim = this;
+  }
+
+  /** Heavy physics setup — call async so loading UI can update. */
+  async initialize(onProgress) {
+    onProgress?.(`Initializing MPM grid (${this.quality.gridSize}³)…`);
+    await this._yield();
+
+    this._initPhysicsShell();
+    onProgress?.("Building tomato tissue particles…");
+    await this._yield();
+
+    this.resetTomato();
+    onProgress?.("Generating surface mesh…");
+    await this._yield();
+
+    this._updateMesh();
+    onProgress?.("Ready");
+  }
+
+  _yield() {
+    return new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
   }
 
   applyQuality(settings) {
@@ -91,6 +112,7 @@ export class TomatoSimulation {
   }
 
   _resize() {
+    if (!this.renderer || !this.camera) return;
     const w = window.visualViewport?.width ?? window.innerWidth;
     const h = window.visualViewport?.height ?? window.innerHeight;
     this.renderer.setSize(w, h, false);
@@ -141,9 +163,8 @@ export class TomatoSimulation {
     this.scene.add(this.plate);
   }
 
-  _initPhysics() {
+  _initPhysicsShell() {
     this._rebuildPhysics(this.quality);
-    this.resetTomato();
   }
 
   _rebuildPhysics(q) {
@@ -417,14 +438,14 @@ export class TomatoSimulation {
   }
 }
 
-export async function createSimulation(canvas) {
+export async function createSimulation(canvas, onProgress) {
   const device = new DeviceProfile();
   const hud = new MobileHUD(device);
   hud.setQuality(device.summary());
 
-  // Warm-up: defer heavy init one frame so loading UI paints on mobile
   await new Promise((r) => requestAnimationFrame(r));
 
   const sim = new TomatoSimulation(canvas, { device, hud });
+  await sim.initialize(onProgress);
   return sim;
 }
