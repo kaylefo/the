@@ -4,9 +4,10 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { HeatShimmerShader, FilmGrainShader } from "./HeatShimmerPass.js";
+import { GodRaysShader } from "./GodRaysPass.js";
 
 /**
- * Post-process chain: render → heat shimmer → bloom → film grain.
+ * Post-process chain: render → heat shimmer → bloom → god rays → film grain.
  */
 export class PostProcessPipeline {
   constructor(renderer, scene, camera, quality = {}) {
@@ -36,6 +37,13 @@ export class PostProcessPipeline {
       this.composer.addPass(this.bloomPass);
     }
 
+    this.godRaysPass = null;
+    if (quality.godRays) {
+      this.godRaysPass = new ShaderPass(GodRaysShader);
+      this.godRaysPass.uniforms.uStrength.value = quality.godRayStrength ?? 0.35;
+      this.composer.addPass(this.godRaysPass);
+    }
+
     this.grainPass = null;
     if (quality.filmGrain) {
       this.grainPass = new ShaderPass(FilmGrainShader);
@@ -56,9 +64,18 @@ export class PostProcessPipeline {
       this.shimmerPass.enabled = quality.heatShimmer !== false;
       this.shimmerPass.uniforms.uStrength.value = quality.shimmerStrength ?? 0.45;
     }
+    if (this.godRaysPass) {
+      this.godRaysPass.enabled = quality.godRays ?? false;
+      this.godRaysPass.uniforms.uStrength.value = quality.godRayStrength ?? 0.35;
+    }
     if (this.grainPass) {
       this.grainPass.enabled = quality.filmGrain ?? false;
     }
+  }
+
+  setGodRayLight(screenX, screenY) {
+    if (!this.godRaysPass) return;
+    this.godRaysPass.uniforms.uLightPos.value.set(screenX, screenY);
   }
 
   setHeatPoints(points, time, globalStrength = 1) {

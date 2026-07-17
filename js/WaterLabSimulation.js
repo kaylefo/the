@@ -14,6 +14,10 @@ import { PostProcessPipeline } from "./rendering/PostProcessPipeline.js";
 import { CausticsGenerator } from "./rendering/CausticsGenerator.js";
 import { createTableCausticsMaterial, createFloorCausticsMaterial } from "./rendering/TableCausticsMaterial.js";
 import { loadStudioEnvironment, applyEnvironmentToScene } from "./rendering/StudioEnvironment.js";
+import { OrbitCameraController } from "./platform/OrbitCameraController.js";
+import { CondensationSimulator } from "./physics/condensation/CondensationSimulator.js";
+import { GlassTankRenderer } from "./rendering/GlassTankRenderer.js";
+import { WebGPUSmokeAccelerator } from "./physics/smoke/WebGPUSmokeAccelerator.js";
 
 const SCALE = 8;
 const LOOK_Y = 0.35;
@@ -32,6 +36,14 @@ export class WaterLabSimulation {
     this.raycaster = new THREE.Raycaster();
     this.activePointerId = null;
     this.isPointerDown = false;
+    this.orbitDrag = false;
+    this.orbitPointerId = null;
+    this.activePointers = new Map();
+    this.lastOrbitPos = null;
+    this.lastPinchDist = null;
+    this.smokeSolverMode = "CPU";
+    this.smokeGPU = null;
+    this._smokeGpuBusy = false;
     this.lastPointerWorld = null;
     this.lastPointerTime = 0;
     this.frame = 0;
@@ -59,6 +71,7 @@ export class WaterLabSimulation {
     this.postProcess?.applyQuality(settings);
     if (this.envMap) {
       this.waterRenderer?.setEnvMap(this.envMap, settings.envStrength ?? 0.85);
+      this.glassRenderer?.setEnvMap(this.envMap, settings.envStrength ?? 0.85);
       applyEnvironmentToScene(this.scene, this.envMap, settings.envStrength ?? 0.85);
     }
     this._applyRendererQuality();
@@ -112,9 +125,11 @@ export class WaterLabSimulation {
   _updateCameraForViewport(w, h) {
     const isPortrait = h > w;
     const dist = isPortrait ? 1.5 : 1.25;
-    this._camBase = { x: dist * 0.55, y: isPortrait ? 0.55 : 0.5, z: dist };
-    this.camera.position.set(this._camBase.x, this._camBase.y, this._camBase.z);
-    this.camera.lookAt(0, LOOK_Y, 0);
+    this.orbitCamera?.reset({
+      x: dist * 0.55,
+      y: isPortrait ? 0.55 : 0.5,
+      z: dist,
+    });
   }
 
   _initScene() {
@@ -123,10 +138,16 @@ export class WaterLabSimulation {
     this.scene.fog = new THREE.FogExp2(0x0a0c10, 0.35);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.01, 30);
+    this.orbitCamera = new OrbitCameraController(this.camera, {
+      target: new THREE.Vector3(0, LOOK_Y, 0),
+      minDistance: 0.85,
+      maxDistance: 3.8,
+    });
   }
 
   _initEnvironment() {
     this.caustics = new CausticsGenerator(this.quality.causticRes ?? 96);
+    this.condensation = new CondensationSimulator(TANK, this.quality.condensationRes ?? 48);
 
     const floorMat = createFloorCausticsMaterial(this.caustics.texture, TANK, SCALE);
     const floor = new THREE.Mesh(
@@ -153,45 +174,12 @@ export class WaterLabSimulation {
   }
 
   _buildGlassTank() {
-    const t = TANK;
-    const s = SCALE;
-    const cx = (t.origin[0] + t.width * 0.5) * s;
-    const cy = (t.origin[1] + t.height * 0.5) * s;
-    const cz = (t.origin[2] + t.depth * 0.5) * s;
-    const wt = t.wallThickness * s;
-
-    const glassMat = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.12,
-      roughness: 0.05,
-      metalness: 0,
-      transmission: 0.85,
-      thickness: 0.5,
-      ior: 1.45,
-      side: THREE.DoubleSide,
-    });
-
-    const group = new THREE.Group();
-
-    const bottom = new THREE.Mesh(new THREE.BoxGeometry(t.width * s, wt, t.depth * s), glassMat);
-    bottom.position.set(cx, t.origin[1] * s + wt * 0.5, cz);
-    group.add(bottom);
-
-    const walls = [
-      { w: wt, h: t.height * s, d: t.depth * s, x: t.origin[0] * s + wt * 0.5, z: cz },
-      { w: wt, h: t.height * s, d: t.depth * s, x: (t.origin[0] + t.width) * s - wt * 0.5, z: cz },
-      { w: t.width * s, h: t.height * s, d: wt, x: cx, z: t.origin[2] * s + wt * 0.5 },
-      { w: t.width * s, h: t.height * s, d: wt, x: cx, z: (t.origin[2] + t.depth) * s - wt * 0.5 },
-    ];
-    for (const w of walls) {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w.w, w.h, w.d), glassMat);
-      mesh.position.set(w.x, cy, w.z);
-      group.add(mesh);
-    }
-
-    this.tankGroup = group;
-    this.scene.add(group);
+    this.glassRenderer = new GlassTankRenderer(
+      this.scene,
+      TANK,
+      SCALE,
+      this.condensation.texture
+    );
   }
 
   _initPhysics() {
@@ -213,6 +201,15 @@ export class WaterLabSimulation {
     const b = tankBounds(TANK);
     this.surfaceY = b.yMin + (b.yMax - b.yMin) * TANK.fillRatio;
     this.vaporization.setSurfaceY(this.surfaceY);
+
+    if (this.quality.useWebGPU) {
+      WebGPUSmokeAccelerator.tryCreate().then((acc) => {
+        if (acc) {
+          this.smokeGPU = acc;
+          this.smokeSolverMode = "WebGPU";
+        }
+      });
+    }
   }
 
   _initRendering() {
@@ -259,8 +256,31 @@ export class WaterLabSimulation {
   }
 
   _initInput() {
+    const isOrbitButton = (e) => e.button === 2 || e.button === 1 || e.altKey;
+    const isOrbitMode = () => this.orbitDrag || this.activePointers.size >= 2;
+
     const onDown = (e) => {
       if (e.target.closest("#hud")) return;
+      this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (isOrbitButton(e) || this.activePointers.size >= 2) {
+        e.preventDefault();
+        if (this.activePointers.size >= 2 && this.isPointerDown) {
+          this.isPointerDown = false;
+          this.activePointerId = null;
+          this.vaporization.clearSustained();
+          this.lastPointerWorld = null;
+        }
+        this.orbitDrag = true;
+        this.orbitPointerId = e.pointerId;
+        this.lastOrbitPos = { x: e.clientX, y: e.clientY };
+        if (this.activePointers.size >= 2) {
+          this.lastPinchDist = this._pinchDistance();
+        }
+        try { this.canvas.setPointerCapture(e.pointerId); } catch { /* noop */ }
+        return;
+      }
+
       e.preventDefault();
       this.isPointerDown = true;
       this.activePointerId = e.pointerId;
@@ -275,12 +295,62 @@ export class WaterLabSimulation {
     };
 
     const onMove = (e) => {
+      if (this.activePointers.has(e.pointerId)) {
+        this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      if (isOrbitMode()) {
+        if (this.activePointers.size >= 2) {
+          const dist = this._pinchDistance();
+          if (this.lastPinchDist != null) {
+            this.orbitCamera.zoom((this.lastPinchDist - dist) * 2.5);
+          }
+          this.lastPinchDist = dist;
+          const c = this._pinchCenter();
+          if (this.lastOrbitPos) {
+            this.orbitCamera.rotate(c.x - this.lastOrbitPos.x, c.y - this.lastOrbitPos.y);
+          }
+          this.lastOrbitPos = c;
+        } else if (this.orbitDrag && this.lastOrbitPos) {
+          const dx = e.clientX - this.lastOrbitPos.x;
+          const dy = e.clientY - this.lastOrbitPos.y;
+          this.orbitCamera.rotate(dx, dy);
+          this.lastOrbitPos = { x: e.clientX, y: e.clientY };
+        }
+        return;
+      }
+
       if (this.activePointerId !== e.pointerId) return;
       this._updatePointer(e);
       if (this.isPointerDown) this._handleInteraction(false);
     };
 
     const onUp = (e) => {
+      this.activePointers.delete(e.pointerId);
+
+      if (this.orbitPointerId === e.pointerId) {
+        this.orbitPointerId = this.activePointers.size > 0 ? [...this.activePointers.keys()][0] : null;
+      }
+
+      if (this.activePointers.size >= 2) {
+        this.orbitDrag = true;
+        this.lastPinchDist = this._pinchDistance();
+        this.lastOrbitPos = this._pinchCenter();
+      } else if (this.activePointers.size === 1 && this.orbitPointerId != null) {
+        this.orbitDrag = true;
+        this.lastOrbitPos = this.activePointers.get(this.orbitPointerId) ?? null;
+        this.lastPinchDist = null;
+      } else {
+        this.orbitDrag = false;
+        this.orbitPointerId = null;
+        this.lastOrbitPos = null;
+        this.lastPinchDist = null;
+      }
+
+      if (this.orbitDrag || this.orbitPointerId === e.pointerId) {
+        try { this.canvas.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+      }
+
       if (this.activePointerId !== e.pointerId) return;
       this.isPointerDown = false;
       this.activePointerId = null;
@@ -293,6 +363,7 @@ export class WaterLabSimulation {
     this.canvas.addEventListener("pointermove", onMove, { passive: true });
     this.canvas.addEventListener("pointerup", onUp);
     this.canvas.addEventListener("pointercancel", onUp);
+    this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
     this.canvas.addEventListener("touchstart", (e) => {
       if (!e.target.closest("#hud")) e.preventDefault();
@@ -319,6 +390,10 @@ export class WaterLabSimulation {
 
     this.canvas.addEventListener("wheel", (e) => {
       if (this.device.mobile) return;
+      if (e.shiftKey) {
+        this.orbitCamera.zoom(e.deltaY);
+        return;
+      }
       this.heatIntensity = Math.max(0.3, Math.min(3, this.heatIntensity - e.deltaY * 0.002));
       const slider = document.getElementById("heat-slider");
       if (slider) slider.value = this.heatIntensity.toFixed(2);
@@ -333,6 +408,20 @@ export class WaterLabSimulation {
       this.paused = document.hidden;
       if (!this.paused) this.clock.getDelta();
     });
+  }
+
+  _pinchDistance() {
+    const pts = [...this.activePointers.values()];
+    if (pts.length < 2) return 0;
+    const dx = pts[0].x - pts[1].x;
+    const dy = pts[0].y - pts[1].y;
+    return Math.hypot(dx, dy);
+  }
+
+  _pinchCenter() {
+    const pts = [...this.activePointers.values()];
+    if (pts.length < 2) return pts[0] ?? { x: 0, y: 0 };
+    return { x: (pts[0].x + pts[1].x) * 0.5, y: (pts[0].y + pts[1].y) * 0.5 };
   }
 
   _updatePointer(e) {
@@ -418,6 +507,7 @@ export class WaterLabSimulation {
     this.water.reset();
     this.smoke.reset();
     this.bubbles.reset();
+    this.condensation?.reset();
     this.vaporization.activeSources.length = 0;
     fillTank(this.water);
   }
@@ -446,7 +536,27 @@ export class WaterLabSimulation {
     const interval = this.quality.smokeInterval ?? 1;
     this._smokeTick = (this._smokeTick ?? 0) + 1;
     if (this._smokeTick % interval !== 0) return;
-    this.smoke.step(dt * interval);
+
+    const stepDt = dt * interval;
+    const gpu = this.smokeGPU;
+
+    if (gpu?.ready && this.quality.useWebGPU) {
+      if (this._smokeGpuBusy && gpu._pendingRead) {
+        gpu.flush().finally(() => { this._smokeGpuBusy = false; });
+      }
+      if (!this._smokeGpuBusy) {
+        const submitted = gpu.advectDensity(this.smoke, stepDt);
+        if (submitted) {
+          this.smoke.step(stepDt, { skipDensityAdvect: true });
+          this._smokeGpuBusy = true;
+          this.smokeSolverMode = "WebGPU";
+          return;
+        }
+      }
+    }
+
+    this.smoke.step(stepDt);
+    this.smokeSolverMode = gpu?.ready && this.quality.useWebGPU ? "WebGPU*" : "CPU";
   }
 
   _updateMesh() {
@@ -501,6 +611,24 @@ export class WaterLabSimulation {
 
     const bub = document.getElementById("stat-bubbles");
     if (bub) bub.textContent = `Bubbles: ${this.bubbles.bubbles.length}`;
+
+    const solver = document.getElementById("stat-solver");
+    if (solver) solver.textContent = `Smoke: ${this.smokeSolverMode}`;
+
+    let condAmt = 0;
+    if (this.condensation?.moisture) {
+      for (let i = 0; i < this.condensation.moisture.length; i++) {
+        condAmt += this.condensation.moisture[i];
+      }
+    }
+    const condEl = document.getElementById("stat-condensation");
+    if (condEl) condEl.textContent = `Glass fog: ${Math.min(100, condAmt * 2).toFixed(0)}%`;
+  }
+
+  _updateGodRayLight() {
+    if (!this.postProcess || !this.keyLight) return;
+    const pos = this.keyLight.position.clone().project(this.camera);
+    this.postProcess.setGodRayLight(pos.x * 0.5 + 0.5, pos.y * 0.5 + 0.5);
   }
 
   _updateHeatScreenPoints() {
@@ -549,16 +677,19 @@ export class WaterLabSimulation {
     this.floorMat?.userData.causticUniforms?.uTime &&
       (this.floorMat.userData.causticUniforms.uTime.value = elapsed);
 
-    if (this._camBase) {
-      this.camera.position.x = this._camBase.x + Math.sin(this.clock.elapsedTime * 0.15) * 0.02;
+    this.orbitCamera.update(dt, elapsed);
+    this.glassRenderer?.setTime(elapsed);
+
+    if (this.frame % 2 === 0) {
+      this.condensation?.step(this.smoke, dt * 2);
     }
-    this.camera.lookAt(0, LOOK_Y, 0);
 
     this.waterRenderer.setTime(this.clock.elapsedTime);
     this.smokeRenderer.setCameraPos(this.camera.position);
 
     this.waterRenderer.renderWaterPass(this.renderer, this.scene, this.camera, this.smokeRenderer.mesh);
     this._updateHeatScreenPoints();
+    this._updateGodRayLight();
     this.postProcess.render(elapsed);
 
     this.audio.setVaporizationRate(this.vaporization.lastVaporRate);
@@ -627,6 +758,7 @@ export async function createWaterSimulation(canvas, loader) {
   await loader.runStage("studio_env", async () => {
     sim.envMap = await loadStudioEnvironment(sim.renderer, sim.scene);
     applyEnvironmentToScene(sim.scene, sim.envMap, sim.quality.envStrength ?? 0.85);
+    sim.glassRenderer?.setEnvMap(sim.envMap, sim.quality.envStrength ?? 0.85);
     await sim._yield();
   });
 
@@ -634,6 +766,7 @@ export async function createWaterSimulation(canvas, loader) {
     sim._initRendering();
     if (sim.envMap) {
       sim.waterRenderer.setEnvMap(sim.envMap, sim.quality.envStrength ?? 0.85);
+      sim.glassRenderer?.setEnvMap(sim.envMap, sim.quality.envStrength ?? 0.85);
     }
     await sim._yield();
   });

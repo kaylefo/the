@@ -29,6 +29,8 @@ export class StableFluidsSmoke {
     this.dissipation = 0.65;
     this.tempDissipation = 1.2;
     this.projectIterations = 18;
+    this.active = new Uint8Array(this.count);
+    this.useActiveCells = true;
   }
 
   idx(i, j, k) {
@@ -41,6 +43,7 @@ export class StableFluidsSmoke {
     this.vx.fill(0);
     this.vy.fill(0);
     this.vz.fill(0);
+    this.active.fill(0);
   }
 
   worldPos(i, j, k, out = new Float32Array(3)) {
@@ -82,12 +85,26 @@ export class StableFluidsSmoke {
           this.vy[idx] += cy * w * 0.5;
           this.vx[idx] += cx * w * 0.3;
           this.vz[idx] += cz * w * 0.3;
+          this._markActive(i, j, k);
         }
       }
     }
   }
 
-  step(dt) {
+  _markActive(i, j, k) {
+    if (!this.useActiveCells) return;
+    for (let dk = -1; dk <= 1; dk++) {
+      for (let dj = -1; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          const ii = i + di, jj = j + dj, kk = k + dk;
+          if (ii < 0 || jj < 0 || kk < 0 || ii >= this.nx || jj >= this.ny || kk >= this.nz) continue;
+          this.active[this.idx(ii, jj, kk)] = 1;
+        }
+      }
+    }
+  }
+
+  step(dt, opts = {}) {
     dt = Math.min(dt, 0.016);
     let maxD = 0;
     for (let i = 0; i < this.count; i++) {
@@ -96,8 +113,10 @@ export class StableFluidsSmoke {
     if (maxD < 1e-6) return;
 
     this._addBuoyancy(dt);
-    this._advect(this.density, this.densityTmp, dt);
-    this.density.set(this.densityTmp);
+    if (!opts.skipDensityAdvect) {
+      this._advect(this.density, this.densityTmp, dt);
+      this.density.set(this.densityTmp);
+    }
     this._advect(this.vx, this.vxTmp, dt);
     this._advect(this.vy, this.vyTmp, dt);
     this._advect(this.vz, this.vzTmp, dt);
@@ -106,37 +125,55 @@ export class StableFluidsSmoke {
     this.vz.set(this.vzTmp);
     this._project(this.projectIterations);
     this._dissipate(dt);
+    if (this.useActiveCells) this._decayActive();
+  }
+
+  _decayActive() {
+    for (let i = 0; i < this.count; i++) {
+      if (this.density[i] < 1e-4) this.active[i] = 0;
+    }
+  }
+
+  _forEachActive(fn) {
+    if (!this.useActiveCells) {
+      for (let k = 1; k < this.nz - 1; k++) {
+        for (let j = 1; j < this.ny - 1; j++) {
+          for (let i = 1; i < this.nx - 1; i++) fn(i, j, k);
+        }
+      }
+      return;
+    }
+    for (let k = 1; k < this.nz - 1; k++) {
+      for (let j = 1; j < this.ny - 1; j++) {
+        for (let i = 1; i < this.nx - 1; i++) {
+          const idx = this.idx(i, j, k);
+          if (this.active[idx] || this.density[idx] > 1e-5) fn(i, j, k);
+        }
+      }
+    }
   }
 
   _addBuoyancy(dt) {
-    for (let k = 1; k < this.nz - 1; k++) {
-      for (let j = 1; j < this.ny - 1; j++) {
-        for (let i = 1; i < this.nx - 1; i++) {
-          const idx = this.idx(i, j, k);
-          const d = this.density[idx];
-          if (d < 1e-5) continue;
-          const tDiff = (this.temperature[idx] - this.ambientTemp) / 100;
-          this.vy[idx] += dt * this.buoyancy * tDiff * (0.5 + d);
-          this.vx[idx] += dt * 0.15 * (Math.random() - 0.5) * d;
-          this.vz[idx] += dt * 0.15 * (Math.random() - 0.5) * d;
-        }
-      }
-    }
+    this._forEachActive((i, j, k) => {
+      const idx = this.idx(i, j, k);
+      const d = this.density[idx];
+      if (d < 1e-5) return;
+      const tDiff = (this.temperature[idx] - this.ambientTemp) / 100;
+      this.vy[idx] += dt * this.buoyancy * tDiff * (0.5 + d);
+      this.vx[idx] += dt * 0.15 * (Math.random() - 0.5) * d;
+      this.vz[idx] += dt * 0.15 * (Math.random() - 0.5) * d;
+    });
   }
 
   _advect(field, out, dt) {
-    for (let k = 1; k < this.nz - 1; k++) {
-      for (let j = 1; j < this.ny - 1; j++) {
-        for (let i = 1; i < this.nx - 1; i++) {
-          const idx = this.idx(i, j, k);
-          const pos = this.worldPos(i, j, k);
-          const px = pos[0] - this.vx[idx] * dt;
-          const py = pos[1] - this.vy[idx] * dt;
-          const pz = pos[2] - this.vz[idx] * dt;
-          out[idx] = this._sampleField(field, px, py, pz);
-        }
-      }
-    }
+    this._forEachActive((i, j, k) => {
+      const idx = this.idx(i, j, k);
+      const pos = this.worldPos(i, j, k);
+      const px = pos[0] - this.vx[idx] * dt;
+      const py = pos[1] - this.vy[idx] * dt;
+      const pz = pos[2] - this.vz[idx] * dt;
+      out[idx] = this._sampleField(field, px, py, pz);
+    });
   }
 
   _sampleField(field, x, y, z) {

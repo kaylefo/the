@@ -239,6 +239,10 @@ export const WATER_QUALITY_TIERS = {
     filmGrain: true,
     grainAmount: 0.04,
     envStrength: 0.95,
+    godRays: true,
+    godRayStrength: 0.38,
+    condensationRes: 56,
+    useWebGPU: true,
   },
   high: {
     label: "High",
@@ -267,6 +271,10 @@ export const WATER_QUALITY_TIERS = {
     shimmerStrength: 0.42,
     filmGrain: false,
     envStrength: 0.85,
+    godRays: true,
+    godRayStrength: 0.28,
+    condensationRes: 48,
+    useWebGPU: false,
   },
   medium: {
     label: "Medium",
@@ -292,6 +300,9 @@ export const WATER_QUALITY_TIERS = {
     shimmerStrength: 0.3,
     filmGrain: false,
     envStrength: 0.7,
+    godRays: false,
+    condensationRes: 40,
+    useWebGPU: false,
   },
   low: {
     label: "Low",
@@ -316,6 +327,9 @@ export const WATER_QUALITY_TIERS = {
     heatShimmer: false,
     filmGrain: false,
     envStrength: 0.5,
+    godRays: false,
+    condensationRes: 32,
+    useWebGPU: false,
   },
 };
 

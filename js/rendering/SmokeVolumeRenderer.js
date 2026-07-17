@@ -93,6 +93,8 @@ export class SmokeVolumeRenderer {
     this.scene = scene;
     this.quality = quality;
     this.textureData = null;
+    this.prevTextureData = null;
+    this.temporalBlend = quality.smokeTemporalBlend ?? 0.35;
     this._initVolume(quality);
   }
 
@@ -170,13 +172,26 @@ export class SmokeVolumeRenderer {
   updateFromSmoke(smoke) {
     if (!this.textureData || this.textureData.length !== smoke.count * 4) {
       this.textureData = new Uint8Array(smoke.count * 4);
+      this.prevTextureData = new Uint8Array(smoke.count * 4);
     }
+
+    const blend = this.temporalBlend;
+    const inv = 1 - blend;
     for (let i = 0; i < smoke.count; i++) {
-      this.textureData[i * 4] = Math.min(255, smoke.density[i] * 200);
-      this.textureData[i * 4 + 1] = Math.min(255, ((smoke.temperature[i] - smoke.ambientTemp) / 200) * 255);
-      this.textureData[i * 4 + 2] = 0;
-      this.textureData[i * 4 + 3] = 255;
+      const d = Math.min(255, smoke.density[i] * 200);
+      const t = Math.min(255, ((smoke.temperature[i] - smoke.ambientTemp) / 200) * 255);
+      const o = i * 4;
+      if (blend > 0 && this.prevTextureData[o + 3]) {
+        this.textureData[o] = this.prevTextureData[o] * blend + d * inv;
+        this.textureData[o + 1] = this.prevTextureData[o + 1] * blend + t * inv;
+      } else {
+        this.textureData[o] = d;
+        this.textureData[o + 1] = t;
+      }
+      this.textureData[o + 2] = 0;
+      this.textureData[o + 3] = 255;
     }
+    this.prevTextureData.set(this.textureData);
 
     if (this.res.nx !== smoke.nx || this.res.ny !== smoke.ny || this.res.nz !== smoke.nz) {
       this.res = { nx: smoke.nx, ny: smoke.ny, nz: smoke.nz };
