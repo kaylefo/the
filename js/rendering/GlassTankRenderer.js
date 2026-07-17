@@ -20,7 +20,7 @@ const glassVertexShader = /* glsl */ `
 
 const glassFragmentShader = /* glsl */ `
   uniform sampler2D uCondensation;
-  uniform samplerCube uEnvMap;
+  uniform sampler2D uEnvMap;
   uniform float uEnvStrength;
   uniform float uTime;
   uniform float uOpacity;
@@ -32,6 +32,14 @@ const glassFragmentShader = /* glsl */ `
 
   float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  }
+
+  vec3 sampleEquirect(vec3 dir) {
+    vec3 d = normalize(dir);
+    float phi = atan(d.z, d.x);
+    float theta = asin(clamp(d.y, -1.0, 1.0));
+    vec2 uv = vec2(phi * 0.15915494309 + 0.5, theta * 0.31830988618 + 0.5);
+    return texture2D(uEnvMap, uv).rgb;
   }
 
   void main() {
@@ -51,7 +59,9 @@ const glassFragmentShader = /* glsl */ `
     n = normalize(n + vec3(bump, bump * 0.5, bump));
 
     vec3 rd = reflect(-v, n);
-    vec3 env = uEnvStrength > 0.01 ? textureCube(uEnvMap, rd).rgb * uEnvStrength : vec3(0.15, 0.18, 0.22);
+    vec3 env = uEnvStrength > 0.01
+      ? sampleEquirect(rd) * uEnvStrength
+      : vec3(0.15, 0.18, 0.22);
 
     vec3 base = mix(vec3(0.85, 0.92, 0.98) * 0.15, env, fresnel * 0.85);
     base += vec3(0.9, 0.95, 1.0) * moisture * 0.12;

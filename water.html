@@ -104,15 +104,21 @@
         var mobile =
           window.matchMedia("(max-width: 768px)").matches ||
           (navigator.maxTouchPoints > 0 && window.innerWidth < 900);
-        if (!mobile) return;
         var hud = document.getElementById("hud");
         var toggle = document.getElementById("hud-toggle");
         var desktop = document.getElementById("controls-desktop");
         var mobileCtl = document.getElementById("controls-mobile");
-        hud?.classList.add("collapsed");
-        toggle?.setAttribute("aria-expanded", "false");
-        desktop?.setAttribute("hidden", "");
-        mobileCtl?.removeAttribute("hidden");
+        if (mobile) {
+          hud?.classList.add("collapsed");
+          toggle?.setAttribute("aria-expanded", "false");
+          desktop?.setAttribute("hidden", "");
+          mobileCtl?.removeAttribute("hidden");
+        } else {
+          hud?.classList.remove("collapsed");
+          toggle?.setAttribute("aria-expanded", "true");
+          desktop?.removeAttribute("hidden");
+          mobileCtl?.setAttribute("hidden", "");
+        }
       }
 
       applyMobileShell();
@@ -140,6 +146,6 @@
     })();
   </script>
 
-  <script type="module" src="js/water-main.js?v=2"></script>
+  <script type="module" src="js/water-main.js?v=3"></script>
 </body>
 </html>

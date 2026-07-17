@@ -55,6 +55,7 @@ export class WaterLabSimulation {
     this.audio = new WaterLabAudio();
     this.bubbles = new BubbleSystem(300);
     this.envMap = null;
+    this.equirectMap = null;
     this._heatProject = new THREE.Vector3();
 
     this.adaptive = new AdaptiveQuality(this.device, (q) => this.applyQuality(q));
@@ -71,12 +72,52 @@ export class WaterLabSimulation {
     this.smokeRenderer?.applyQuality(settings);
     this.postProcess?.applyQuality(settings);
     if (this.envMap) {
-      this.waterRenderer?.setEnvMap(this.envMap, settings.envStrength ?? 0.85);
-      this.glassRenderer?.setEnvMap(this.envMap, settings.envStrength ?? 0.85);
       applyEnvironmentToScene(this.scene, this.envMap, settings.envStrength ?? 0.85);
+    }
+    if (this.equirectMap) {
+      this.waterRenderer?.setEnvMap(this.equirectMap, settings.envStrength ?? 0.85);
+      this.glassRenderer?.setEnvMap(this.equirectMap, settings.envStrength ?? 0.85);
     }
     this._applyRendererQuality();
     this.hud?.setQuality(this.device.summary());
+  }
+
+  _applyStudioMaps(studio, strength = 0.85) {
+    this.envMap = studio?.envMap ?? null;
+    this.equirectMap = studio?.equirect ?? null;
+    if (this.envMap) {
+      applyEnvironmentToScene(this.scene, this.envMap, strength);
+    }
+    if (this.equirectMap) {
+      this.waterRenderer?.setEnvMap(this.equirectMap, strength);
+      this.glassRenderer?.setEnvMap(this.equirectMap, strength);
+    }
+  }
+
+  async _warmupShaders(onProgress) {
+    onProgress?.(0.2);
+    this._resize();
+    await this._yield();
+    onProgress?.(0.55);
+    // First real draw compiles custom water/smoke/glass programs.
+    this.renderer.render(this.scene, this.camera);
+    await this._yield();
+    onProgress?.(0.85);
+    // Second pass warms post-process / RT paths without blocking the UI at 96%.
+    try {
+      this.waterRenderer?.renderWaterPass(
+        this.renderer,
+        this.scene,
+        this.camera,
+        this.smokeRenderer?.mesh
+      );
+      this.postProcess?.render(0);
+    } catch (err) {
+      console.warn("[WaterLab] Post-process warmup skipped:", err?.message);
+      this.renderer.render(this.scene, this.camera);
+    }
+    onProgress?.(1);
+    await this._yield();
   }
 
   _applyRendererQuality() {
@@ -767,11 +808,13 @@ export class WaterLabSimulation {
     loadingUI?.hide();
     document.getElementById("loading")?.classList.add("hidden");
     document.body.dataset.simReady = "true";
+    // Schedule on rAF — never run a heavy physics frame synchronously here,
+    // or mobile browsers appear stuck on the final load percent.
     const loop = () => {
       this.update();
       requestAnimationFrame(loop);
     };
-    loop();
+    requestAnimationFrame(loop);
   }
 
   getDiagnostics() {
@@ -790,21 +833,7 @@ export class WaterLabSimulation {
   }
 }
 
-export const WATER_LOAD_STAGES = [
-  { id: "webgl_probe", label: "Checking WebGL support", weight: 8 },
-  { id: "engine_module", label: "Downloading water physics engine", weight: 14 },
-  { id: "device_profile", label: "Detecting device & quality tier", weight: 7 },
-  { id: "scene_3d", label: "Creating 3D scene & tank", weight: 10 },
-  { id: "webgl_renderer", label: "Initializing WebGL renderer", weight: 10 },
-  { id: "studio_env", label: "Loading HDR studio environment", weight: 8 },
-  { id: "water_renderer", label: "Compiling water & smoke shaders", weight: 12 },
-  { id: "lights_input", label: "Setting up lights & controls", weight: 8 },
-  { id: "fluid_grid", label: "Allocating FLIP water grid", weight: 15 },
-  { id: "smoke_grid", label: "Allocating volumetric smoke grid", weight: 12 },
-  { id: "fill_water", label: "Filling tank with water", weight: 10 },
-  { id: "surface_mesh", label: "Extracting water surface mesh", weight: 8 },
-  { id: "finalize", label: "Finalizing simulation", weight: 5 },
-];
+export { WATER_LOAD_STAGES } from "./platform/WaterLoadStages.js";
 
 export async function createWaterSimulation(canvas, loader) {
   const { device, hud } = await loader.runStage("device_profile", async () => {
@@ -829,17 +858,16 @@ export async function createWaterSimulation(canvas, loader) {
   });
 
   await loader.runStage("studio_env", async () => {
-    sim.envMap = await loadStudioEnvironment(sim.renderer, sim.scene);
-    applyEnvironmentToScene(sim.scene, sim.envMap, sim.quality.envStrength ?? 0.85);
-    sim.glassRenderer?.setEnvMap(sim.envMap, sim.quality.envStrength ?? 0.85);
+    const studio = await loadStudioEnvironment(sim.renderer, sim.scene);
+    sim._applyStudioMaps(studio, sim.quality.envStrength ?? 0.85);
     await sim._yield();
   });
 
   await loader.runStage("water_renderer", async () => {
     sim._initRendering();
-    if (sim.envMap) {
-      sim.waterRenderer.setEnvMap(sim.envMap, sim.quality.envStrength ?? 0.85);
-      sim.glassRenderer?.setEnvMap(sim.envMap, sim.quality.envStrength ?? 0.85);
+    if (sim.equirectMap) {
+      sim.waterRenderer.setEnvMap(sim.equirectMap, sim.quality.envStrength ?? 0.85);
+      sim.glassRenderer?.setEnvMap(sim.equirectMap, sim.quality.envStrength ?? 0.85);
     }
     await sim._yield();
   });
@@ -858,6 +886,11 @@ export async function createWaterSimulation(canvas, loader) {
   });
 
   await loader.runStage("smoke_grid", async () => {
+    // Smoke solver is allocated in fluid_grid; upload an empty volume now so the
+    // 3D texture + volume shader compile before fill/mesh work.
+    if (sim.smoke && sim.smokeRenderer) {
+      sim.smokeRenderer.updateFromSmoke(sim.smoke);
+    }
     await sim._yield();
   });
 
@@ -871,9 +904,7 @@ export async function createWaterSimulation(canvas, loader) {
   });
 
   await loader.runStage("finalize", async () => {
-    sim._resize();
-    sim.renderer.render(sim.scene, sim.camera);
-    await sim._yield();
+    await sim._warmupShaders((p) => loader.setSubProgress(p));
   });
 
   return sim;

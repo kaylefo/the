@@ -29,6 +29,8 @@ export class MobileHUD {
       window.__tomatoSim?.dropTomato();
     });
     document.getElementById("reset-btn")?.addEventListener("click", () => {
+      // Water lab owns #reset-btn in WaterLabSimulation._initInput.
+      if (window.__waterLab) return;
       window.__tomatoSim?.resetTomato();
     });
   }
@@ -49,7 +51,8 @@ export class MobileHUD {
     const badge = document.getElementById("quality-badge");
     if (!badge) return;
     badge.textContent = `${summary.label}${summary.proMaxClass ? " · Pro Max" : ""}`;
-    badge.title = `Grid ${summary.grid}³ · DPR ${summary.pixelRatio.toFixed(1)} · ${summary.webgl2 ? "WebGL2" : "WebGL1"}`;
+    const grid = summary.grid ?? summary.waterGridSize ?? "—";
+    badge.title = `Grid ${grid}³ · DPR ${summary.pixelRatio.toFixed(1)} · ${summary.webgl2 ? "WebGL2" : "WebGL1"}`;
   }
 
   setQuality(summary) {

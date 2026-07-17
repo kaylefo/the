@@ -31,8 +31,10 @@ const waterFragmentShader = /* glsl */ `
   uniform float uBoilIntensity;
   uniform float uCameraNear;
   uniform float uCameraFar;
-  uniform samplerCube uEnvMap;
+  uniform sampler2D uEnvMap;
   uniform float uEnvStrength;
+  uniform mat4 uProjectionMatrix;
+  uniform mat4 uViewMatrix;
   uniform mat4 uProjectionMatrixInverse;
   uniform mat4 uViewMatrixInverse;
 
@@ -56,6 +58,14 @@ const waterFragmentShader = /* glsl */ `
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
   }
 
+  vec3 sampleEquirect(vec3 dir) {
+    vec3 d = normalize(dir);
+    float phi = atan(d.z, d.x);
+    float theta = asin(clamp(d.y, -1.0, 1.0));
+    vec2 uv = vec2(phi * 0.15915494309 + 0.5, theta * 0.31830988618 + 0.5);
+    return texture2D(uEnvMap, uv).rgb;
+  }
+
   vec3 traceSSR(vec3 wp, vec3 n, vec3 v, vec2 baseUV) {
     if (uSSRStrength < 0.01) return vec3(-1.0);
     vec3 rd = reflect(-v, n);
@@ -66,7 +76,7 @@ const waterFragmentShader = /* glsl */ `
     for (int i = 0; i < 32; i++) {
       p += rd * stride;
       if (length(p - wp) > maxDist) break;
-      vec4 clip = projectionMatrix * viewMatrix * vec4(p, 1.0);
+      vec4 clip = uProjectionMatrix * uViewMatrix * vec4(p, 1.0);
       vec3 proj = clip.xyz / clip.w;
       vec2 uv = proj.xy * 0.5 + 0.5;
       if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
@@ -94,7 +104,7 @@ const waterFragmentShader = /* glsl */ `
     float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
 
     // Screen-space refraction
-    vec4 clipPos = projectionMatrix * viewMatrix * vec4(vWorldPos, 1.0);
+    vec4 clipPos = uProjectionMatrix * uViewMatrix * vec4(vWorldPos, 1.0);
     vec2 screenUV = (clipPos.xy / clipPos.w) * 0.5 + 0.5;
     vec2 refrOffset = n.xz * 0.025 * (1.0 - NdotV);
     vec3 refrColor = texture2D(uSceneColor, screenUV + refrOffset).rgb;
@@ -106,14 +116,14 @@ const waterFragmentShader = /* glsl */ `
     // Specular (GGX-ish)
     vec3 h = normalize(l + v);
     float NdotH = max(dot(n, h), 0.0);
-    float alpha = mix(0.04, 0.02, uQuality);
-    float spec = pow(NdotH, 1.0 / alpha) * 0.35;
+    float roughness = mix(0.04, 0.02, uQuality);
+    float spec = pow(NdotH, 1.0 / max(roughness, 1e-4)) * 0.35;
 
     // Fake caustic shimmer on floor-facing normals
     float caustic = noise(vWorldPos.xz * 24.0 + uTime * 0.4) * max(0.0, -n.y) * 0.25;
 
     vec3 skyReflect = mix(vec3(0.15, 0.2, 0.28), vec3(0.85, 0.9, 0.95), pow(max(dot(vReflectDir, vec3(0, 1, 0)), 0.0), 4.0));
-    vec3 envReflect = uEnvStrength > 0.01 ? textureCube(uEnvMap, normalize(vReflectDir)).rgb : skyReflect;
+    vec3 envReflect = uEnvStrength > 0.01 ? sampleEquirect(normalize(vReflectDir)) : skyReflect;
     vec3 fallbackReflect = mix(skyReflect, envReflect, clamp(uEnvStrength, 0.0, 1.0));
     vec3 ssr = traceSSR(vWorldPos, n, v, screenUV);
     vec3 reflectColor = ssr.x >= 0.0 ? ssr : fallbackReflect;
@@ -125,8 +135,8 @@ const waterFragmentShader = /* glsl */ `
     float boilFoam = uBoilIntensity * (0.35 + 0.65 * pow(1.0 - NdotV, 3.0)) * (0.4 + uSloshEnergy * 0.3);
     color = mix(color, vec3(0.92, 0.96, 1.0), boilFoam * 0.55);
 
-    float alpha = mix(0.82, 0.95, fresnel);
-    gl_FragColor = vec4(color, alpha);
+    float opacity = mix(0.82, 0.95, fresnel);
+    gl_FragColor = vec4(color, opacity);
   }
 `;
 
@@ -185,6 +195,8 @@ export class WaterRenderer {
         uCameraFar: { value: 30 },
         uEnvMap: { value: null },
         uEnvStrength: { value: 0 },
+        uProjectionMatrix: { value: new THREE.Matrix4() },
+        uViewMatrix: { value: new THREE.Matrix4() },
         uProjectionMatrixInverse: { value: new THREE.Matrix4() },
         uViewMatrixInverse: { value: new THREE.Matrix4() },
       },
@@ -357,6 +369,8 @@ export class WaterRenderer {
     const w = mainRenderer.domElement.width;
     const h = mainRenderer.domElement.height;
     this.material.uniforms.uResolution.value.set(w, h);
+    this.material.uniforms.uProjectionMatrix.value.copy(camera.projectionMatrix);
+    this.material.uniforms.uViewMatrix.value.copy(camera.matrixWorldInverse);
     this.material.uniforms.uProjectionMatrixInverse.value.copy(camera.projectionMatrixInverse);
     this.material.uniforms.uViewMatrixInverse.value.copy(camera.matrixWorld);
     this.setCameraParams(camera.near, camera.far);
