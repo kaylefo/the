@@ -1,5 +1,7 @@
 # Hyper-Realistic Tomato Squashing Physics
 
+**Live demo:** [https://kaylefo.github.io/the/](https://kaylefo.github.io/the/)
+
 Multiphysics browser simulation: **MPM solid mechanics**, **neo-Hookean hyperelasticity**, **phase-field fracture**, **FLIP Navier-Stokes juice**, anatomical tissue layers, and **BSSRDF subsurface rendering**.
 
 ## Physics stack
