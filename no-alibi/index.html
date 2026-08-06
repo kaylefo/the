@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#09090b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>NO ALIBI</title>
+<style>html,body{margin:0;min-height:100%;background:#09090b;color:#f5f2e9;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{display:grid;place-items:center;overflow:hidden}.boot{text-align:center;padding:32px}.boot strong{display:block;font-size:clamp(34px,12vw,72px);letter-spacing:-.07em}.boot span{display:block;margin-top:12px;color:#9999a3;font-size:12px;letter-spacing:.18em;text-transform:uppercase;line-height:1.5}.bar{width:min(260px,70vw);height:3px;background:#27272d;margin:24px auto 0;overflow:hidden;border-radius:99px}.bar:after{content:"";display:block;width:45%;height:100%;background:#ff4a35;animation:load .8s ease-in-out infinite alternate}@keyframes load{to{transform:translateX(125%)}}.error{max-width:520px;color:#ffbd2e}</style>
+</head>
+<body>
+<div class="boot" id="boot"><strong>NO ALIBI</strong><span>Loading 2,000 offline cards</span><div class="bar"></div></div>
+<script>
+(async()=>{
+ const boot=document.getElementById('boot');
+ const urls=["./data/part-0.txt", "./data/part-1.txt", "./data/part-2.txt", "./data/part-3.txt", "./data/part-4.txt", "./data/part-5.txt", "./data/part-6.txt", "./data/part-7.txt"];
+ try{
+  if(typeof DecompressionStream!=='function')throw new Error('Open this in a current version of Safari or Chrome.');
+  const responses=await Promise.all(urls.map(url=>fetch(url,{cache:'force-cache'})));
+  if(responses.some(response=>!response.ok))throw new Error('The offline deck could not be loaded. Refresh once.');
+  const b64=(await Promise.all(responses.map(response=>response.text()))).join('');
+  const binary=atob(b64),bytes=new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+  const app=await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  document.open();document.write(app);document.close();
+ }catch(error){boot.classList.add('error');boot.innerHTML='<strong>NO ALIBI</strong><span>'+String(error&&error.message||error)+'</span>';}
+})();
+</script>
+</body>
+</html>
