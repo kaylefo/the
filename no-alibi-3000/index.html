@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#08080a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>NO ALIBI — 3,000 Cards</title>
+<link rel="stylesheet" href="./style.css?v=3000-2">
+</head>
+<body>
+<main class="app">
+<header class="top"><div><div class="brand">NO ALIBI</div><small class="sub">3,000 CARDS · 100% LOCAL DECK</small></div><div class="top-buttons"><button class="icon" id="historyButton" type="button" aria-label="History">≡</button><button class="icon" id="settingsButton" type="button" aria-label="Settings">⚙</button></div></header>
+<nav class="modes" aria-label="Card type"><button type="button" data-mode="mixed" class="on">MIXED</button><button type="button" data-mode="truth">TRUTH</button><button type="button" data-mode="dare">DARE</button></nav>
+<div class="status" id="status">INITIALIZING 3,000-CARD DECK…</div>
+<article class="card truth" id="card"><div class="meta"><div><b class="kind" id="kind">TRUTH</b><span class="tag" id="tag">CONFESSION</span></div><span class="round" id="round">ROUND 01</span></div><div class="prompt" id="prompt">Loading the first card…</div><footer class="foot"><div class="level"><span class="label">INTENSITY</span><b id="levelName">WARM-UP</b><div class="dots" id="dots"><i></i><i></i><i></i><i></i><i></i></div></div><div class="pen"><span class="label">REFUSE</span><b id="penalty">1 SIP</b></div></footer></article>
+<section class="actions"><button class="done" id="doneButton" type="button">I DID IT</button><button class="pass" id="passButton" type="button">DRINK INSTEAD</button></section>
+<button class="new-card" id="nextButton" type="button">DRAW A DIFFERENT CARD</button>
+<footer class="stats"><span><b id="played">0</b> PLAYED</span><span><b id="completed">0</b> DONE</span><span><b id="passed">0</b> PASSED</span></footer>
+</main>
+<div class="overlay" id="settingsOverlay"><section class="sheet"><h2>GAME SETTINGS</h2><p>The full 3,000-card deck is generated locally. No API, decoder, account, analytics, or remote deck request.</p><div class="grid"><div class="field"><label for="mix">INTENSITY MIX</label><select id="mix"><option value="full">FULL SPECTRUM</option><option value="light">MOSTLY LIGHT</option><option value="savage">MOSTLY SAVAGE</option></select></div><div class="field"><label for="maxPenalty">MAX PENALTY</label><select id="maxPenalty"><option value="3">3</option><option value="4">4</option><option value="5" selected>5</option></select></div><div class="field"><label for="unit">PENALTY WORD</label><input id="unit" maxlength="12" value="SIP"></div><div class="field"><label for="vibrate">HAPTICS</label><select id="vibrate"><option value="yes">ON</option><option value="no">OFF</option></select></div></div><label class="filelabel" for="fileInput">IMPORT JSON CARD PACK</label><input id="fileInput" type="file" accept="application/json,.json"><button id="reshuffleButton" type="button">RESHUFFLE ALL POOLS</button><button id="clearImportedButton" type="button" class="danger">REMOVE IMPORTED CARDS</button><button id="saveSettingsButton" type="button" class="close">SAVE + RETURN</button></section></div>
+<div class="overlay" id="historyOverlay"><section class="sheet"><h2>THIS SESSION</h2><p id="historySummary">No rounds yet.</p><ul class="history-list" id="historyList"></ul><button id="clearHistoryButton" type="button" class="danger">CLEAR SESSION</button><button id="closeHistoryButton" type="button" class="close">RETURN TO GAME</button></section></div>
+<div class="toast" id="toast"></div>
+<script src="./deck-base.js?v=3000-2"></script>
+<script src="./deck-core-a.js?v=3000-2"></script>
+<script src="./deck-core-b.js?v=3000-2"></script>
+<script src="./deck-expansion.js?v=3000-2"></script>
+<script src="./deck-finalize.js?v=3000-2"></script>
+<script src="./app.js?v=3000-2"></script>
+</body>
+</html>
