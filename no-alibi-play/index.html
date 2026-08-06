@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#09090b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>NO ALIBI</title>
+<style>
+html,body{margin:0;min-height:100%;background:#09090b;color:#f5f2e9;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{display:grid;place-items:center;overflow:hidden}.boot{text-align:center;padding:32px;max-width:560px}.boot strong{display:block;font-size:clamp(38px,14vw,78px);letter-spacing:-.075em}.boot span{display:block;margin-top:13px;color:#9999a3;font-size:12px;letter-spacing:.17em;text-transform:uppercase;line-height:1.6}.bar{width:min(270px,72vw);height:3px;background:#27272d;margin:25px auto 0;overflow:hidden;border-radius:99px}.bar:after{content:"";display:block;width:42%;height:100%;background:#ff4a35;animation:load .7s ease-in-out infinite alternate}@keyframes load{to{transform:translateX(140%)}}.error span{color:#ffbd2e}.retry{margin-top:22px;border:0;background:#f5f2e9;color:#111114;border-radius:999px;padding:14px 23px;font:800 12px/1 system-ui;letter-spacing:.12em;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="boot" id="boot"><strong>NO ALIBI</strong><span id="status">Opening 2,000-card deck</span><div class="bar"></div></div>
+<script>
+(async()=>{
+  const boot=document.getElementById('boot');
+  const status=document.getElementById('status');
+  const errors=[];
+  const SAME_ORIGIN_BASE='../no-alibi/data/';
+  const RAW_BASE='https://raw.githubusercontent.com/kaylefo/the/main/no-alibi/data/';
+
+  const compact=text=>String(text||'').replace(/\s+/g,'');
+  const isBase64=text=>text.length>1000&&/^[A-Za-z0-9+/=]+$/.test(text);
+
+  async function readPart(index){
+    const file=`part-${index}.txt`;
+    const urls=[
+      new URL(SAME_ORIGIN_BASE+file,location.href).href,
+      RAW_BASE+file+'?v=clean-20260806'
+    ];
+    for(const url of urls){
+      try{
+        const response=await fetch(url,{cache:'no-store',credentials:'omit'});
+        if(!response.ok){errors.push(`${file}: HTTP ${response.status}`);continue;}
+        const text=compact(await response.text());
+        if(!isBase64(text)){errors.push(`${file}: invalid data`);continue;}
+        return text;
+      }catch(error){errors.push(`${file}: ${String(error&&error.message||error)}`);}
+    }
+    throw new Error(`Could not load ${file}`);
+  }
+
+  try{
+    if(typeof DecompressionStream!=='function') throw new Error('This browser cannot unpack the game. Open this exact link in current Safari or Chrome.');
+    const parts=[];
+    for(let i=0;i<8;i++){
+      status.textContent=`Loading deck · ${i+1}/8`;
+      parts.push(await readPart(i));
+    }
+    status.textContent='Starting game';
+    const encoded=parts.join('');
+    const binary=atob(encoded);
+    const bytes=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+    const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const app=await new Response(stream).text();
+    if(!app.includes('NO_ALIBI_CORE_DECK')||!app.includes('core-dare-5-200')) throw new Error('Deck validation failed');
+    document.open();
+    document.write(app);
+    document.close();
+  }catch(error){
+    console.error('NO ALIBI launch failure',error,errors);
+    boot.classList.add('error');
+    boot.innerHTML=`<strong>NO ALIBI</strong><span>${String(error&&error.message||error)}${errors.length?'<br><br>'+errors.slice(-3).join('<br>'):''}</span><button class="retry" type="button" onclick="location.reload()">RETRY</button>`;
+  }
+})();
+</script>
+</body>
+</html>
