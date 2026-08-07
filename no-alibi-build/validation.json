@@ -1,0 +1,23 @@
+{
+  "build": "no-alibi-literal-3000-v1",
+  "original_cards": 1000,
+  "new_cards": 2000,
+  "total_cards": 3000,
+  "new_truths": 1000,
+  "new_dares": 1000,
+  "new_unique_ids": 2000,
+  "new_unique_texts": 2000,
+  "runtime_templates": 0,
+  "new_distribution": {
+    "truth-1": 200,
+    "truth-2": 200,
+    "truth-3": 200,
+    "truth-4": 200,
+    "truth-5": 200,
+    "dare-1": 200,
+    "dare-2": 200,
+    "dare-3": 200,
+    "dare-4": 200,
+    "dare-5": 200
+  }
+}
