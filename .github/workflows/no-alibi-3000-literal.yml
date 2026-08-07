@@ -1,0 +1,35 @@
+name: Build NO ALIBI 3000 literal deck
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "no-alibi-build/**"
+      - ".github/workflows/no-alibi-3000-literal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: no-alibi-3000-literal
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate and validate literal deck
+        run: python no-alibi-build/build.py
+      - name: Commit generated site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add no-alibi-3000-literal
+          if git diff --cached --quiet; then
+            echo "Generated site already current."
+          else
+            git commit -m "Deploy NO ALIBI 3000 literal-card build"
+            git push
+          fi
